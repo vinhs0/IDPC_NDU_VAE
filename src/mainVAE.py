@@ -4,12 +4,10 @@ import statistics
 import torch
 import numpy as np
 
-# Assumed project imports
 from ga.GA import GA
 from ga.Configs import Configs
 from problem.IDPCNDU import IDPCNDU
 
-# VAE and KT imports
 from vae.VAE import VAE, train_vae
 from vae.KT import KnowledgeTransfer
 
@@ -25,26 +23,21 @@ def normalize_data(data):
     max_val = np.max(data)
     
     if max_val - min_val == 0:
-        return data # Avoid division by zero
+        return data
         
     return 2 * (data - min_val) / (max_val - min_val) - 1
 
 def solver(fw, data_path, output_path, name):
     t1 = time.time()
     task = IDPCNDU()
-    # task.read_data(data_path) # Uncomment if your task needs explicit read call
+    task.read_data(data_path)
     
     ga = GA(task, output_path, name)
     kt = KnowledgeTransfer()
     bf = float('inf')
     rs = []
-    print("Is Torch available?", torch.cuda.is_available())
-    if (not torch.cuda.is_available()):
-        print("Config CUDA first!, exiting...")
-        return 
     
     for seed in range(Configs.REPEAT):
-        # Set seeds
         Configs.rd.seed(seed)
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -176,6 +169,11 @@ def build_model(fw, file_path, data_path):
 
 def main():
     print("Running VAE-Integrated Solver...")
+    print("Is Torch available?", torch.cuda.is_available())
+    if (not torch.cuda.is_available()):
+        print("Config CUDA first!, exiting...")
+        return 
+    
     data_path = "D:\\multi-nde-py\\data" 
     output_path = "outputVAE"
     result_file = os.path.join("outputVAE", "test_vae_results.txt")
