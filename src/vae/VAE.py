@@ -1,12 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
 
 class VAE(nn.Module):
     # latent_dim = 6 is in the paper
     def __init__(self, task_dim, latent_dim=6):
         """
-        VAE Architecture based on Fig. 3 of the paper.
+        VAE Architecture.
         Args:
             task_dim (int): Dimension of the task (D).
             latent_dim (int): Dimension of the latent space (d_lat). Default is 6.
@@ -29,25 +31,15 @@ class VAE(nn.Module):
         self.fc4 = nn.Linear(hidden_dim, task_dim)
 
     def encode(self, x):
-        """
-        Encodes input to latent distribution parameters.
-        """
         h1 = F.relu(self.fc1(x))
         return self.fc_mu(h1), self.fc_logvar(h1)
 
     def reparameterize(self, mu, logvar):
-        """
-        Standard VAE reparameterization trick.
-        """
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
 
     def decode(self, z):
-        """
-        Decodes latent vector back to task space.
-        Uses Tanh activation for output as per Fig 3.
-        """
         h3 = F.relu(self.fc3(z))
         return torch.tanh(self.fc4(h3))
 
@@ -56,14 +48,71 @@ class VAE(nn.Module):
         z = self.reparameterize(mu, logvar)
         return self.decode(z), mu, logvar
 
-# Loss Function based on Eq. (4)
+# Loss Function dựa trên Eq. (4)
 def loss_function(recon_x, x, mu, logvar, beta=1.0):
     # MSE Loss
-    MSE = F.mse_loss(recon_x, x, reduction='mean') # Paper defines MSE as mean
+    MSE = F.mse_loss(recon_x, x, reduction='mean')
     
     # KL Divergence
-    # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    # Adjust KLD by latent_dim if needed to match the scale of the paper's summation
-    
+
     return MSE + beta * KLD
+
+def train_vae(model, elite_genotypes, epochs=5, batch_size=32, learning_rate=1e-3):
+    """
+    Trains the VAE model on the genotypes of elite solutions.
+    
+    Args:
+        model (VAE): The VAE instance to train.
+        elite_genotypes (np.array or torch.Tensor): The dataset of elite solution genotypes (G(E_i)).
+                                                    Shape should be (num_samples, task_dim).
+                                                    NOTE: Data should ideally be normalized to [-1, 1] 
+                                                    because the VAE output uses Tanh[cite: 324].
+        epochs (int): Number of training epochs. Default is 5.
+        batch_size (int): Size of training batches.
+        learning_rate (float): Learning rate for Adam optimizer.
+        
+    Returns:
+        model: The trained VAE model.
+    """
+    # Ensure model is in training mode
+    model.train()
+    
+    # define optimizer: Paper specifies Adam optimizer 
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    
+    # Prepare data
+    if not isinstance(elite_genotypes, torch.Tensor):
+        # Convert numpy array to float tensor
+        tensor_x = torch.FloatTensor(elite_genotypes)
+    else:
+        tensor_x = elite_genotypes.float()
+        
+    # Create dataloader for batching
+    dataset = TensorDataset(tensor_x)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    
+    # Training Loop
+    for epoch in range(epochs):
+        total_loss = 0
+        for batch_idx, (data,) in enumerate(dataloader):
+            # Zero gradients
+            optimizer.zero_grad()
+            
+            # Forward pass: obtain reconstruction, mu, and logvar [cite: 331]
+            recon_batch, mu, logvar = model(data)
+            
+            # Calculate loss: MSE + KL Divergence [cite: 332]
+            loss = loss_function(recon_batch, data, mu, logvar)
+            
+            # Backward pass and optimization
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+            
+        # Optional: Print average loss per epoch
+        avg_loss = total_loss / len(dataloader.dataset)
+        print(f'Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}')
+
+    return model
