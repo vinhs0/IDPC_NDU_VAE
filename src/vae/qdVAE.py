@@ -1,20 +1,20 @@
 import os
 import time
 import math
+import random
 import numpy as np
 import torch
-from typing import List
+from typing import List, Tuple
 
-# Project imports (Assumed structure)
 from .VAEConfigs import Configs
 from ga.Population import Population
 from ga.Individual import Individual
 from ga.NodeDepth import NodeDepth 
 
-from VAE import VAE, train_vae
-from KT import KnowledgeTransfer
+from .VAE import VAE, train_vae
+from .KT import KnowledgeTransfer
 
-class GA:
+class QD:
     def __init__(self, task, output_path: str, file_name: str):
         self.task = task
         self.output_path = output_path
@@ -23,6 +23,38 @@ class GA:
         # HMQD Components
         self.kt = KnowledgeTransfer()
         self.vae = None 
+        
+        # MAP-Elites Archive
+        self.archive = {}
+
+    def get_behavior_descriptor(self, ind: Individual) -> Tuple:
+        """
+        Defines the Behavior Descriptor (BD) to index the MAP-Elites grid.
+        For routing/graph problems, the number of domains traversed is a common BD.
+        """
+        return (ind.domain, )
+
+    def add_to_archive(self, ind: Individual) -> Tuple[bool, bool]:
+        """
+        MAP-Elites insertion logic.
+        Returns: (was_added, is_new_cell)
+        """
+        if ind.fitness <= -Configs.MAX_VALUE:
+            return False, False # Invalid solution
+
+        bd = self.get_behavior_descriptor(ind)
+
+        # If cell is empty, add it (Reward +2 scenario in HMQD)
+        if bd not in self.archive:
+            self.archive[bd] = ind
+            return True, True
+        
+        # If cell is occupied, only replace if the new fitness is strictly better (Reward +1 scenario)
+        if ind.fitness > self.archive[bd].fitness:
+            self.archive[bd] = ind
+            return True, False
+            
+        return False, False
 
     def normalize_data(self, data):
         """Helper to normalize data to [-1, 1] for VAE (Tanh output)."""
@@ -39,34 +71,27 @@ class GA:
         ind = Individual()
         chromosome = []
         
-        # Mapping Logic: Scale the continuous range [-1, 1] to the discrete Integer range [1, Num_Domains]
         min_node = 1
         max_node = self.task.get_number_of_domains()
         
         for val in vector:
-            # Normalize
             norm_0_1 = (val + 1) / 2
-            # Scale to Node ID range
             node_id = int(norm_0_1 * (max_node - min_node) + min_node)
-            # Clamp to ensure validity
             node_id = max(min_node, min(node_id, max_node))
-            
-            # Create Gene (NodeDepth). 
-            # Note: Depth is set to 0 initially; the fitness evaluation/decoding 
-            # often handles structure, or you might need a local search to fix depths.
             chromosome.append(NodeDepth(node_id, 0)) 
             
         ind.set_chromosome(chromosome)
         return ind
 
-    def save(self, seed: int, pop: Population, t1: float, t2: float):
+    def save(self, seed: int, best_fitness: float, t1: float, t2: float):
         out_file_name_opt = f"{self.file_name}_seed({seed}).opt"
         full_path = os.path.join(self.output_path, out_file_name_opt)
         try:
             with open(full_path, "w") as fw_opt:
                 fw_opt.write(f"Filename: {self.file_name}\n")
                 fw_opt.write(f"Seed: {seed}\n")
-                fw_opt.write(f"Fitness: {-pop.get_best_individual().fitness}\n")
+                fw_opt.write(f"Fitness: {-best_fitness}\n") # Saving as positive cost
+                fw_opt.write(f"Archive Coverage: {len(self.archive)} cells\n")
                 
                 duration_sec = t2 - t1
                 hours = int(duration_sec // 3600)
@@ -82,14 +107,19 @@ class GA:
 
     def run(self, seed: int) -> Individual:
         t1 = time.time()
-        vae_training_time = 0.0 #Biến tích lũy thời gian train của VAE
+        vae_training_time = 0.0 # Biến tích lũy thời gian train của VAE
         
-        population = Population(self.task)
-        population.init_population() 
-        population.update_best_individual()
+        # Initialize MAP-Elites Archive
+        self.archive.clear()
+        
+        # 1. Random Initialization
+        for _ in range(Configs.POPULATION_SIZE):
+            ind = Individual()
+            ind.random_init(self.task.adj_domain)
+            ind.update_fitness(self.task)
+            self.add_to_archive(ind)
 
         generation = 0
-
         transfer_interval = Configs.TRANSFER_INTERVAL_GEN
         transfer_batch = Configs.TRANSFER_BATCH_SIZE
 
@@ -101,55 +131,61 @@ class GA:
             fw_gen.write(f"Generations {self.file_name}\n")
 
             while generation < Configs.MAX_GENERATIONS:
-                # Log Current Best
-                best_fitness = -population.get_best_individual().fitness
+                
+                # Get current global best from archive for logging
+                current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
+                best_fitness = -current_best_ind.fitness
+                
                 fw_gen.write(f"{generation} {best_fitness}\n")
                 fw_gen.flush()
 
                 # 2. Reproduction (Crossover & Mutation)
-                offspring = self.reproduction(population.get_population())
+                # We pass the archive values as the parent pool
+                archive_parents = list(self.archive.values())
                 
-                # Prepare intermediate population
-                imi_pop = []
-                imi_pop.extend(offspring)
-                imi_pop.extend(population.get_population())
+                # Fallback if archive is somehow empty
+                if not archive_parents: 
+                    ind = Individual()
+                    ind.random_init(self.task.adj_domain)
+                    ind.update_fitness(self.task)
+                    self.add_to_archive(ind)
+                    archive_parents = list(self.archive.values())
 
-                # 3. Survival Selection (Standard GA)
-                population.set_population(imi_pop)
-                population.survival_selection()
+                offspring = self.reproduction(archive_parents)
                 
-                # Increment Generation (should be at the end)
+                # 3. Grid Assignment (MAP-Elites Replacement)
+                # Instead of standard survival_selection(), we try to insert each offspring into the grid
+                for o in offspring:
+                    self.add_to_archive(o)
+                
                 generation += 1
 
-                # KNOWLEDGE TRANSFER (Triggered every 100 Epochs)
+                # 4. KNOWLEDGE TRANSFER (Triggered every X Epochs)
                 if generation > 0 and generation % transfer_interval == 0:
                     print(f"--- [Gen {generation}] Triggering Knowledge Transfer ---")
                     
-                    # A. Data Extraction (Current Elites)
-                    current_inds = population.get_population()
+                    # A. Data Extraction (Current Elites directly from the Archive)
+                    current_inds = list(self.archive.values())
                     raw_genotypes = []
-                    valid_inds = 0
                     
                     for ind in current_inds:
                         chrom = ind.get_chromosome()
-                        if chrom: # Ensure chromosome is not empty
+                        if chrom:
                             vec = [nd.node for nd in chrom]
                             raw_genotypes.append(vec)
-                            valid_inds += 1
                     
-                    if valid_inds > 0:
+                    if len(raw_genotypes) > 0:
                         # Normalize inputs for VAE [-1, 1]
                         elite_genotypes = self.normalize_data(raw_genotypes)
                         task_dim = elite_genotypes.shape[1]
 
-                        # VAE training (ở đây có đếm thời gian training để trừ bớt về sau)
+                        # B. Train VAE (đếm thời gian training để trừ bớt về sau)
                         self.vae = VAE(task_dim=task_dim, latent_dim=6)
                         start_train_time = time.time()
                         train_vae(self.vae, elite_genotypes, epochs=5)
                         vae_training_time += (time.time() - start_train_time)
 
                         # C. Perform Transfer
-                        # Mock Target Archive = Current Population Map
                         target_archive_mock = {i: gen for i, gen in enumerate(elite_genotypes)}
                         
                         new_solution_data = self.kt.perform_transfer(
@@ -160,65 +196,67 @@ class GA:
                             batch_size=transfer_batch
                         )
 
-                        # D. Inject New Solutions
-                        transfer_candidates = []
+                        # D. Inject New Solutions & Update UCB1 Bandit
                         feedback_results = []
-                        current_best_fit = population.get_best_individual().fitness
+                        successful_transfers = 0
 
                         for method_idx, new_vec in new_solution_data:
                             # Convert Vector -> Individual
                             new_ind = self.vector_to_individual(new_vec)
-                            
-                            # Evaluate
                             new_ind.update_fitness(self.task)
                             
-                            # Add to a temporary list to merge later
-                            transfer_candidates.append(new_ind)
-
-                            # Calculate Reward (Simple improvement check)
+                            # Attempt to add to MAP-Elites Archive
+                            was_added, is_new_cell = self.add_to_archive(new_ind)
+                            
+                            # Calculate Reward based on HMQD paper rules
                             reward = 0
-                            if new_ind.fitness > current_best_fit:
-                                reward = 1  # Fitness Improvement
+                            if is_new_cell:
+                                reward = 2  # Discovered a completely new grid cell
+                                successful_transfers += 1
+                            elif was_added:
+                                reward = 1  # Improved an existing grid cell
+                                successful_transfers += 1
                             
                             feedback_results.append((method_idx, reward))
                         
                         # Update Bandit Stats
                         self.kt.update_bandit(feedback_results)
-
-                        # E. Merge & Reselect
-                        current_pop = population.get_population()
-                        current_pop.extend(transfer_candidates)
-                        population.set_population(current_pop)
-                        population.survival_selection()
                         
-                        print(f"    -> Injected {len(transfer_candidates)} solutions. Bandit Stats: {self.kt.selected}")
+                        print(f"    -> Successfully injected/improved {successful_transfers} solutions. Bandit Stats: {self.kt.selected}")
                 # ============================================================
+        
+        # Get absolute best individual before exiting
+        final_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
+
         # Thời gian chạy (không tính thời gian train VAE)
         t2 = time.time()
         adjusted_t2 = t2 - vae_training_time 
-        self.save(seed, population, t1, adjusted_t2)
+        self.save(seed, final_best_ind.fitness, t1, adjusted_t2)
         
-        return population.get_best_individual()
+        return final_best_ind
 
+    # --- Helpers ---
     def select_parent(self, parents: List[Individual]) -> Individual:
-        pos1 = Configs.rd.randint(0, len(parents) - 1)
-        pos2 = Configs.rd.randint(0, len(parents) - 1)
-        while pos1 == pos2:
-            pos2 = Configs.rd.randint(0, len(parents) - 1)
-        p1 = parents[pos1]
-        p2 = parents[pos2]
-        return p1 if p1.fitness > p2.fitness else p2
+        """
+        In standard MAP-Elites, parent selection is uniformly random across the archive.
+        """
+        return random.choice(parents)
 
     def reproduction(self, parents: List[Individual]) -> List[Individual]:
+        # Using the Population class purely to access the crossover/mutation methods
         offspring_pop = Population(self.task)
-        current_offspring = offspring_pop.get_population() 
+        current_offspring = [] 
+        
         while len(current_offspring) < Configs.POPULATION_SIZE:
             p1 = self.select_parent(parents)
             p2 = self.select_parent(parents)
+            
             if Configs.rd.random() < Configs.CROSSOVER_RATE:
                 o = offspring_pop.crossover(p1, p2)
                 if Configs.rd.random() < Configs.MUTATION_RATE:
                     o = offspring_pop.mutation(o)
+                    
                 o.update_fitness(self.task)
                 current_offspring.append(o)
+                
         return current_offspring
