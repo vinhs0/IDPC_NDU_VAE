@@ -151,3 +151,48 @@ class KnowledgeTransfer:
         """
         for method, reward in results:
             self.update_stats(method, reward)
+
+    def receive_knowledge(self, target_worker, source_vae, source_dim, target_archive_mock, batch_size):
+        """
+        Orchestrates the reception of knowledge from a foreign VAE into the target worker.
+        """
+        if source_vae is None:
+            return
+            
+        # 1. Generate new candidate solutions (raw vectors)
+        new_solution_data = self.perform_transfer(
+            target_archive=target_archive_mock,
+            source_vae=source_vae,
+            D_t=target_worker.task_dim,
+            D_s=source_dim,
+            batch_size=batch_size
+        )
+
+        feedback_results = []
+        successful_transfers = 0
+
+        # 2. Evaluate and inject into the target's MAP-Elites Archive
+        for method_idx, new_vec in new_solution_data:
+            # Use the target worker's domain knowledge to decode and evaluate
+            new_ind = target_worker.vector_to_individual(new_vec)
+            new_ind.update_fitness(target_worker.task)
+            
+            # Attempt to add to archive
+            was_added, is_new_cell = target_worker.add_to_archive(new_ind)
+            
+            # Calculate HMQD rewards
+            reward = 0
+            if is_new_cell:
+                reward = 2
+                successful_transfers += 1
+            elif was_added:
+                reward = 1
+                successful_transfers += 1
+            
+            feedback_results.append((method_idx, reward))
+        
+        # 3. Update the Bandit statistics based on how well the transfer performed
+        self.update_bandit(feedback_results)
+        
+        task_identifier = getattr(target_worker, 'task_id', 'Unknown')
+        print(f"Task {task_identifier} received transfer. Injected/Improved {successful_transfers}. Bandit Stats: {self.selected}")

@@ -5,10 +5,11 @@ import random
 import numpy as np
 import torch
 from typing import List, Tuple
+from torch_geometric.data import Data
 
 from .VAEConfigs import Configs
 from ga.Population import Population
-from ga.Individual import Individual
+from .Individual import Individual
 from ga.NodeDepth import NodeDepth 
 
 from .VAE import VAE, train_vae
@@ -24,7 +25,7 @@ class QD:
         self.kt = KnowledgeTransfer()
         self.vae = None 
         
-        # MAP-Elites Archive
+        # MAP-Elites Archive (có thể xem xét điều chỉnh lại archive cho hợp lý)
         self.archive = {}
 
     def get_behavior_descriptor(self, ind: Individual) -> Tuple:
@@ -168,11 +169,20 @@ class QD:
                     current_inds = list(self.archive.values())
                     raw_genotypes = []
                     
+                    # for ind in current_inds:
+                    #     chrom = ind.get_chromosome()
+                    #     if chrom:
+                    #         vec = [nd.node for nd in chrom]
+                    #         raw_genotypes.append(vec)
                     for ind in current_inds:
-                        chrom = ind.get_chromosome()
-                        if chrom:
-                            vec = [nd.node for nd in chrom]
-                            raw_genotypes.append(vec)
+                        x, edge_index = ind.get_graph_data()
+                        
+                        # Convert numpy to Torch Geometric Data object
+                        data = Data(
+                            x=torch.tensor(x, dtype=torch.float), 
+                            edge_index=torch.tensor(edge_index, dtype=torch.long)
+                        )
+                        raw_genotypes.append(data)
                     
                     if len(raw_genotypes) > 0:
                         # Normalize inputs for VAE [-1, 1]
