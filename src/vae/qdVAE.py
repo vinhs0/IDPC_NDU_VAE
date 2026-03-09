@@ -12,21 +12,23 @@ from ga.Population import Population
 from .Individual import Individual
 from ga.NodeDepth import NodeDepth 
 
-from .VAE import VAE, train_vae
+from .VAE import GraphVAE, train_vae
 from .KT import KnowledgeTransfer
 
 class QD:
-    def __init__(self, task, output_path: str, file_name: str):
+    def __init__(self, task, output_path: str, file_name: str, task_id: int = 0):
         self.task = task
         self.output_path = output_path
         self.file_name = file_name
+        self.task_id = task_id
         
         # HMQD Components
         self.kt = KnowledgeTransfer()
         self.vae = None 
         
-        # MAP-Elites Archive (có thể xem xét điều chỉnh lại archive cho hợp lý)
+        # MAP-Elites Archive
         self.archive = {}
+        self.task_dim = self.task.get_number_of_domains()
 
     def get_behavior_descriptor(self, ind: Individual) -> Tuple:
         """
@@ -65,17 +67,23 @@ class QD:
         if max_val - min_val == 0: return data
         return 2 * (data - min_val) / (max_val - min_val) - 1
 
-    def vector_to_individual(self, vector: np.array) -> Individual:
+    def vector_to_individual(self, node_features) -> Individual:
         """
-        Converts VAE output (continuous vector [-1, 1]) back to Individual (discrete Node IDs).
+        Converts GraphVAE output back to an Individual (discrete Node IDs).
+        Note: GraphVAE outputs a 2D matrix of shape [num_nodes, node_feature_dim].
         """
         ind = Individual()
         chromosome = []
         
         min_node = 1
-        max_node = self.task.get_number_of_domains()
+        max_node = self.task_dim
         
-        for val in vector:
+        # Ensure we are working with a numpy array
+        if torch.is_tensor(node_features):
+            node_features = node_features.detach().cpu().numpy()
+            
+        for feat in node_features:
+            val = feat[0] 
             norm_0_1 = (val + 1) / 2
             node_id = int(norm_0_1 * (max_node - min_node) + min_node)
             node_id = max(min_node, min(node_id, max_node))
@@ -106,14 +114,80 @@ class QD:
         except IOError as e:
             print(f"Error saving file: {e}")
 
-    def run(self, seed: int) -> Individual:
-        t1 = time.time()
-        vae_training_time = 0.0 # Biến tích lũy thời gian train của VAE
+    # =========================================================================
+    # MULTITASKING METHODS (Used by the concurrent main.py script)
+    # =========================================================================
+
+    def run_batch(self, generations: int, fw_gen=None, global_gen_start: int = 0):
+        """
+        Runs the MAP-Elites evolution for a specific batch of generations.
+        """
+        # Ensure archive is seeded if starting fresh
+        if not self.archive:
+            for _ in range(Configs.POPULATION_SIZE):
+                ind = Individual()
+                ind.random_init(self.task.adj_domain)
+                ind.update_fitness(self.task)
+                self.add_to_archive(ind)
+
+        for g in range(generations):
+            current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
+            best_fitness = -current_best_ind.fitness
+            
+            if fw_gen:
+                fw_gen.write(f"{global_gen_start + g} {best_fitness}\n")
+                fw_gen.flush()
+
+            archive_parents = list(self.archive.values())
+            
+            if not archive_parents: 
+                ind = Individual()
+                ind.random_init(self.task.adj_domain)
+                ind.update_fitness(self.task)
+                self.add_to_archive(ind)
+                archive_parents = list(self.archive.values())
+
+            offspring = self.reproduction(archive_parents)
+            for o in offspring:
+                self.add_to_archive(o)
+
+    def train_and_get_vae(self) -> Tuple[GraphVAE, list, float]:
+        """
+        Extracts elites, prepares PyTorch Geometric graph data, 
+        trains the GraphVAE, and returns it.
+        """
+        current_inds = list(self.archive.values())
         
-        # Initialize MAP-Elites Archive
+        if not current_inds:
+            return None, [], 0.0
+            
+        graph_data_list = GraphVAE.prepare_graph_data(current_inds)
+        
+        if len(graph_data_list) == 0:
+            return None, [], 0.0
+
+        vae_model = GraphVAE(node_feature_dim=2, num_nodes=self.task_dim, latent_dim=6)
+        
+        start_train_time = time.time()
+        train_vae(vae_model, graph_data_list, epochs=5)
+        training_time = time.time() - start_train_time
+        
+        return vae_model, graph_data_list, training_time
+
+    # =========================================================================
+    # SINGLE-TASK METHOD (Restored monolithic run loop for backward compatibility)
+    # =========================================================================
+
+    def run(self, seed: int) -> Individual:
+        """
+        Original monolithic run loop. Performs self-transfer for single tasks.
+        """
+        t1 = time.time()
+        vae_training_time = 0.0 
+        
         self.archive.clear()
         
-        # 1. Random Initialization
+        # Random Initialization
         for _ in range(Configs.POPULATION_SIZE):
             ind = Individual()
             ind.random_init(self.task.adj_domain)
@@ -132,19 +206,14 @@ class QD:
             fw_gen.write(f"Generations {self.file_name}\n")
 
             while generation < Configs.MAX_GENERATIONS:
-                
-                # Get current global best from archive for logging
                 current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
                 best_fitness = -current_best_ind.fitness
                 
                 fw_gen.write(f"{generation} {best_fitness}\n")
                 fw_gen.flush()
 
-                # 2. Reproduction (Crossover & Mutation)
-                # We pass the archive values as the parent pool
                 archive_parents = list(self.archive.values())
                 
-                # Fallback if archive is somehow empty
                 if not archive_parents: 
                     ind = Individual()
                     ind.random_init(self.task.adj_domain)
@@ -154,91 +223,60 @@ class QD:
 
                 offspring = self.reproduction(archive_parents)
                 
-                # 3. Grid Assignment (MAP-Elites Replacement)
-                # Instead of standard survival_selection(), we try to insert each offspring into the grid
                 for o in offspring:
                     self.add_to_archive(o)
                 
                 generation += 1
 
-                # 4. KNOWLEDGE TRANSFER (Triggered every X Epochs)
+                # SELF-TRANSFER Logic
                 if generation > 0 and generation % transfer_interval == 0:
-                    print(f"--- [Gen {generation}] Triggering Knowledge Transfer ---")
-                    
-                    # A. Data Extraction (Current Elites directly from the Archive)
+                    print(f"--- [Gen {generation}] Triggering Self-Transfer Knowledge ---")
                     current_inds = list(self.archive.values())
-                    raw_genotypes = []
                     
-                    # for ind in current_inds:
-                    #     chrom = ind.get_chromosome()
-                    #     if chrom:
-                    #         vec = [nd.node for nd in chrom]
-                    #         raw_genotypes.append(vec)
-                    for ind in current_inds:
-                        x, edge_index = ind.get_graph_data()
-                        
-                        # Convert numpy to Torch Geometric Data object
-                        data = Data(
-                            x=torch.tensor(x, dtype=torch.float), 
-                            edge_index=torch.tensor(edge_index, dtype=torch.long)
-                        )
-                        raw_genotypes.append(data)
+                    # Uses the updated PyG static extractor
+                    graph_data_list = GraphVAE.prepare_graph_data(current_inds)
                     
-                    if len(raw_genotypes) > 0:
-                        # Normalize inputs for VAE [-1, 1]
-                        elite_genotypes = self.normalize_data(raw_genotypes)
-                        task_dim = elite_genotypes.shape[1]
-
-                        # B. Train VAE (đếm thời gian training để trừ bớt về sau)
-                        self.vae = VAE(task_dim=task_dim, latent_dim=6)
+                    if len(graph_data_list) > 0:
+                        self.vae = GraphVAE(node_feature_dim=2, num_nodes=self.task_dim, latent_dim=6)
                         start_train_time = time.time()
-                        train_vae(self.vae, elite_genotypes, epochs=5)
+                        train_vae(self.vae, graph_data_list, epochs=5)
                         vae_training_time += (time.time() - start_train_time)
 
-                        # C. Perform Transfer
-                        target_archive_mock = {i: gen for i, gen in enumerate(elite_genotypes)}
+                        # Provide graph data list as the target mock
+                        target_archive_mock = {i: data for i, data in enumerate(graph_data_list)}
                         
                         new_solution_data = self.kt.perform_transfer(
                             target_archive=target_archive_mock,
                             source_vae=self.vae,
-                            D_t=task_dim,
-                            D_s=task_dim,
+                            D_t=self.task_dim,
+                            D_s=self.task_dim,
                             batch_size=transfer_batch
                         )
 
-                        # D. Inject New Solutions & Update UCB1 Bandit
                         feedback_results = []
                         successful_transfers = 0
 
                         for method_idx, new_vec in new_solution_data:
-                            # Convert Vector -> Individual
                             new_ind = self.vector_to_individual(new_vec)
                             new_ind.update_fitness(self.task)
                             
-                            # Attempt to add to MAP-Elites Archive
                             was_added, is_new_cell = self.add_to_archive(new_ind)
                             
-                            # Calculate Reward based on HMQD paper rules
                             reward = 0
                             if is_new_cell:
-                                reward = 2  # Discovered a completely new grid cell
+                                reward = 2 
                                 successful_transfers += 1
                             elif was_added:
-                                reward = 1  # Improved an existing grid cell
+                                reward = 1 
                                 successful_transfers += 1
                             
                             feedback_results.append((method_idx, reward))
                         
-                        # Update Bandit Stats
                         self.kt.update_bandit(feedback_results)
-                        
                         print(f"    -> Successfully injected/improved {successful_transfers} solutions. Bandit Stats: {self.kt.selected}")
-                # ============================================================
         
-        # Get absolute best individual before exiting
         final_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
 
-        # Thời gian chạy (không tính thời gian train VAE)
         t2 = time.time()
         adjusted_t2 = t2 - vae_training_time 
         self.save(seed, final_best_ind.fitness, t1, adjusted_t2)
@@ -247,13 +285,10 @@ class QD:
 
     # --- Helpers ---
     def select_parent(self, parents: List[Individual]) -> Individual:
-        """
-        In standard MAP-Elites, parent selection is uniformly random across the archive.
-        """
+        """In standard MAP-Elites, parent selection is uniformly random across the archive."""
         return random.choice(parents)
 
     def reproduction(self, parents: List[Individual]) -> List[Individual]:
-        # Using the Population class purely to access the crossover/mutation methods
         offspring_pop = Population(self.task)
         current_offspring = [] 
         

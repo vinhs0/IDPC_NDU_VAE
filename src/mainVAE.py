@@ -61,10 +61,10 @@ def multitask_solver(fw, tasks_info):
             # Ở đây, mỗi worker sẽ chạy luồng thông thường sau 1 lượng Configs.TRANSFER_INTERVAL_GEN
             # sau đó mới thực hiện chuyển giao tri thức.
             for i, worker in enumerate(workers):
-                worker.run(generations=transfer_interval, fw_gen=log_files[i], global_gen_start=generation)
+                worker.run_batch(generations=transfer_interval, fw_gen=log_files[i], global_gen_start=generation)
             generation += transfer_interval
             
-            if generation >= Configs.MAX_GENERATIONS:
+            if generation >= Configs.MAX_GENERATIONS: 
                 break
 
             print(f"\n[Gen {generation}] Triggering Cross-Task Knowledge Transfer...")
