@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import numpy as np
 
 from torch_geometric.nn import GCNConv
 from torch_geometric.loader import DataLoader 
@@ -36,6 +37,43 @@ class GraphVAE(nn.Module):
         flattened_latent = latent_dim * num_nodes
         self.fc3 = nn.Linear(flattened_latent, hidden_dim * num_nodes)
         self.fc4 = nn.Linear(hidden_dim * num_nodes, node_feature_dim * num_nodes)
+
+    def prepare_graph_data(individuals) -> list:
+        """
+        Takes a list of Individual objects and converts them into 
+        a list of PyTorch Geometric Data objects.
+        """
+        graph_data_list = []
+        
+        for ind in individuals:
+            x, edge_index = ind.get_graph_data()
+            
+            # Normalize the node features before converting to tensor
+            # The node ID is the first feature, we normalize it to [-1, 1] 
+            # to match the Tanh output of the VAE decoder.
+            max_node = ind.total_domain
+            min_node = 1
+            
+            # If the individual somehow has no nodes, skip
+            if len(x) == 0:
+                continue
+
+            # Normalize Node IDs
+            if max_node - min_node > 0:
+                x[:, 0] = 2 * ((x[:, 0] - min_node) / (max_node - min_node)) - 1
+            
+            # Normalize Depth (Optional, but good for neural networks)
+            max_depth = np.max(x[:, 1]) if len(x) > 0 else 1
+            if max_depth > 0:
+                 x[:, 1] = 2 * (x[:, 1] / max_depth) - 1
+
+            # Convert numpy arrays to Torch Tensors
+            x_tensor = torch.tensor(x, dtype=torch.float)
+            edge_index_tensor = torch.tensor(edge_index, dtype=torch.long)
+            
+            graph_data_list.append(Data(x=x_tensor, edge_index=edge_index_tensor))
+            
+        return graph_data_list
 
     def encode(self, x, edge_index):
         """

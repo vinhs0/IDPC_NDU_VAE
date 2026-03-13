@@ -8,12 +8,12 @@ from typing import List, Tuple
 from torch_geometric.data import Data
 
 from .VAEConfigs import Configs
-from ga.Population import Population
-from .Individual import Individual
-from ga.NodeDepth import NodeDepth 
+from vae.Population import Population
+from vae.Individual import Individual
+from vae.NodeDepth import NodeDepth 
 
-from .VAE import GraphVAE, train_vae
-from .KT import KnowledgeTransfer
+from .VAE2 import GraphVAE, train_vae
+from .KT2 import KnowledgeTransfer
 
 class QD:
     def __init__(self, task, output_path: str, file_name: str, task_id: int = 0):
@@ -178,110 +178,110 @@ class QD:
     # SINGLE-TASK METHOD (Restored monolithic run loop for backward compatibility)
     # =========================================================================
 
-    def run(self, seed: int) -> Individual:
-        """
-        Original monolithic run loop. Performs self-transfer for single tasks.
-        """
-        t1 = time.time()
-        vae_training_time = 0.0 
+    # def run(self, seed: int) -> Individual:
+    #     """
+    #     Original monolithic run loop. Performs self-transfer for single tasks.
+    #     """
+    #     t1 = time.time()
+    #     vae_training_time = 0.0 
         
-        self.archive.clear()
+    #     self.archive.clear()
         
-        # Random Initialization
-        for _ in range(Configs.POPULATION_SIZE):
-            ind = Individual()
-            ind.random_init(self.task.adj_domain)
-            ind.update_fitness(self.task)
-            self.add_to_archive(ind)
+    #     # Random Initialization
+    #     for _ in range(Configs.POPULATION_SIZE):
+    #         ind = Individual()
+    #         ind.random_init(self.task.adj_domain)
+    #         ind.update_fitness(self.task)
+    #         self.add_to_archive(ind)
 
-        generation = 0
-        transfer_interval = Configs.TRANSFER_INTERVAL_GEN
-        transfer_batch = Configs.TRANSFER_BATCH_SIZE
+    #     generation = 0
+    #     transfer_interval = Configs.TRANSFER_INTERVAL_GEN
+    #     transfer_batch = Configs.TRANSFER_BATCH_SIZE
 
-        out_file_name_gen = f"{self.file_name}_seed({seed}).gen"
-        full_path = os.path.join(self.output_path, out_file_name_gen)
-        print(f"Logging generations to: {out_file_name_gen}")
+    #     out_file_name_gen = f"{self.file_name}_seed({seed}).gen"
+    #     full_path = os.path.join(self.output_path, out_file_name_gen)
+    #     print(f"Logging generations to: {out_file_name_gen}")
 
-        with open(full_path, "w") as fw_gen:
-            fw_gen.write(f"Generations {self.file_name}\n")
+    #     with open(full_path, "w") as fw_gen:
+    #         fw_gen.write(f"Generations {self.file_name}\n")
 
-            while generation < Configs.MAX_GENERATIONS:
-                current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
-                best_fitness = -current_best_ind.fitness
+    #         while generation < Configs.MAX_GENERATIONS:
+    #             current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
+    #             best_fitness = -current_best_ind.fitness
                 
-                fw_gen.write(f"{generation} {best_fitness}\n")
-                fw_gen.flush()
+    #             fw_gen.write(f"{generation} {best_fitness}\n")
+    #             fw_gen.flush()
 
-                archive_parents = list(self.archive.values())
+    #             archive_parents = list(self.archive.values())
                 
-                if not archive_parents: 
-                    ind = Individual()
-                    ind.random_init(self.task.adj_domain)
-                    ind.update_fitness(self.task)
-                    self.add_to_archive(ind)
-                    archive_parents = list(self.archive.values())
+    #             if not archive_parents: 
+    #                 ind = Individual()
+    #                 ind.random_init(self.task.adj_domain)
+    #                 ind.update_fitness(self.task)
+    #                 self.add_to_archive(ind)
+    #                 archive_parents = list(self.archive.values())
 
-                offspring = self.reproduction(archive_parents)
+    #             offspring = self.reproduction(archive_parents)
                 
-                for o in offspring:
-                    self.add_to_archive(o)
+    #             for o in offspring:
+    #                 self.add_to_archive(o)
                 
-                generation += 1
+    #             generation += 1
 
-                # SELF-TRANSFER Logic
-                if generation > 0 and generation % transfer_interval == 0:
-                    print(f"--- [Gen {generation}] Triggering Self-Transfer Knowledge ---")
-                    current_inds = list(self.archive.values())
+    #             # SELF-TRANSFER Logic
+    #             if generation > 0 and generation % transfer_interval == 0:
+    #                 print(f"--- [Gen {generation}] Triggering Self-Transfer Knowledge ---")
+    #                 current_inds = list(self.archive.values())
                     
-                    # Uses the updated PyG static extractor
-                    graph_data_list = GraphVAE.prepare_graph_data(current_inds)
+    #                 # Uses the updated PyG static extractor
+    #                 graph_data_list = GraphVAE.prepare_graph_data(current_inds)
                     
-                    if len(graph_data_list) > 0:
-                        self.vae = GraphVAE(node_feature_dim=2, num_nodes=self.task_dim, latent_dim=6)
-                        start_train_time = time.time()
-                        train_vae(self.vae, graph_data_list, epochs=5)
-                        vae_training_time += (time.time() - start_train_time)
+    #                 if len(graph_data_list) > 0:
+    #                     self.vae = GraphVAE(node_feature_dim=2, num_nodes=self.task_dim, latent_dim=6)
+    #                     start_train_time = time.time()
+    #                     train_vae(self.vae, graph_data_list, epochs=5)
+    #                     vae_training_time += (time.time() - start_train_time)
 
-                        # Provide graph data list as the target mock
-                        target_archive_mock = {i: data for i, data in enumerate(graph_data_list)}
+    #                     # Provide graph data list as the target mock
+    #                     target_archive_mock = {i: data for i, data in enumerate(graph_data_list)}
                         
-                        new_solution_data = self.kt.perform_transfer(
-                            target_archive=target_archive_mock,
-                            source_vae=self.vae,
-                            D_t=self.task_dim,
-                            D_s=self.task_dim,
-                            batch_size=transfer_batch
-                        )
+    #                     new_solution_data = self.kt.perform_transfer(
+    #                         target_archive=target_archive_mock,
+    #                         source_vae=self.vae,
+    #                         D_t=self.task_dim,
+    #                         D_s=self.task_dim,
+    #                         batch_size=transfer_batch
+    #                     )
 
-                        feedback_results = []
-                        successful_transfers = 0
+    #                     feedback_results = []
+    #                     successful_transfers = 0
 
-                        for method_idx, new_vec in new_solution_data:
-                            new_ind = self.vector_to_individual(new_vec)
-                            new_ind.update_fitness(self.task)
+    #                     for method_idx, new_vec in new_solution_data:
+    #                         new_ind = self.vector_to_individual(new_vec)
+    #                         new_ind.update_fitness(self.task)
                             
-                            was_added, is_new_cell = self.add_to_archive(new_ind)
+    #                         was_added, is_new_cell = self.add_to_archive(new_ind)
                             
-                            reward = 0
-                            if is_new_cell:
-                                reward = 2 
-                                successful_transfers += 1
-                            elif was_added:
-                                reward = 1 
-                                successful_transfers += 1
+    #                         reward = 0
+    #                         if is_new_cell:
+    #                             reward = 2 
+    #                             successful_transfers += 1
+    #                         elif was_added:
+    #                             reward = 1 
+    #                             successful_transfers += 1
                             
-                            feedback_results.append((method_idx, reward))
+    #                         feedback_results.append((method_idx, reward))
                         
-                        self.kt.update_bandit(feedback_results)
-                        print(f"    -> Successfully injected/improved {successful_transfers} solutions. Bandit Stats: {self.kt.selected}")
+    #                     self.kt.update_bandit(feedback_results)
+    #                     print(f"    -> Successfully injected/improved {successful_transfers} solutions. Bandit Stats: {self.kt.selected}")
         
-        final_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
+        # final_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
 
-        t2 = time.time()
-        adjusted_t2 = t2 - vae_training_time 
-        self.save(seed, final_best_ind.fitness, t1, adjusted_t2)
+        # t2 = time.time()
+        # adjusted_t2 = t2 - vae_training_time 
+        # self.save(seed, final_best_ind.fitness, t1, adjusted_t2)
         
-        return final_best_ind
+        # return final_best_ind
 
     # --- Helpers ---
     def select_parent(self, parents: List[Individual]) -> Individual:

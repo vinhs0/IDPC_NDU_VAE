@@ -2,7 +2,7 @@ import math
 import random
 from typing import List, Optional
 
-from .Configs import Configs
+from .VAEConfigs import Configs
 from .Individual import Individual
 from .NodeDepth import NodeDepth
 
