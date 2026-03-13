@@ -201,5 +201,4 @@ class KnowledgeTransfer:
             feedback_results.append((method_idx, reward))
 
         self.update_bandit(feedback_results)
-        task_identifier = getattr(target_worker, 'task_id', 'Unknown')
         print(f"Task received transfer. Injected/Improved {successful_transfers}. Bandit Stats: {self.selected}")
