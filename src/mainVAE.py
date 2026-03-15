@@ -162,8 +162,8 @@ def main():
         return 
     
     data_path = "D:\\multi-nde-py\\data" 
-    output_path = "outputVAE"
-    result_file = os.path.join("outputVAE", "test_vae_results.txt")
+    output_path = "outputVAE2"
+    result_file = os.path.join("outputVAE2", "test_vae_results.txt")
     
     if not os.path.exists(output_path):
         os.makedirs(output_path)

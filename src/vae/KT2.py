@@ -139,7 +139,7 @@ class KnowledgeTransfer:
         """
         Algorithm 3: ARAKT main loop.
         """
-        print("Bắt đầu chuyển giao...")
+        # print("Bắt đầu chuyển giao...")
         new_solutions = []
         method = self.select_transfer_method()
         
@@ -152,7 +152,7 @@ class KnowledgeTransfer:
             if sol is not None:
                 new_solutions.append((method, sol))
                 
-        print("Kết thúc chuyển giao! Chuyển giao thành công")
+        # print("Kết thúc chuyển giao! Chuyển giao thành công")
         return new_solutions
 
     def update_bandit(self, results):
@@ -181,8 +181,6 @@ class KnowledgeTransfer:
         successful_transfers = 0
         for method_idx, new_vec in new_solution_data:
             # Use the target worker's domain knowledge to decode and evaluate
-            # kiểm tra thành phần trong vòng lặp for
-
             new_ind = target_worker.vector_to_individual(new_vec)
             new_ind.update_fitness(target_worker.task)
 
@@ -201,4 +199,4 @@ class KnowledgeTransfer:
             feedback_results.append((method_idx, reward))
 
         self.update_bandit(feedback_results)
-        print(f"Task received transfer. Injected/Improved {successful_transfers}. Bandit Stats: {self.selected}")
+        # print(f"Task received transfer. Injected/Improved {successful_transfers}. Bandit Stats: {self.selected}")
