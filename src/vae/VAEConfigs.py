@@ -7,7 +7,7 @@ class Configs:
     
     POPULATION_SIZE = 100
     MAX_GENERATIONS = 500
-    REPEAT = 30
+    REPEAT = 5
     CROSSOVER_RATE = 0.8
     MUTATION_RATE = 0.1
 

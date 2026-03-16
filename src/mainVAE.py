@@ -8,20 +8,16 @@ from vae.qdVAE import QD
 from vae.VAEConfigs import Configs
 from problem.IDPCNDU import IDPCNDU
 
-def multitask_solver(fw, tasks_info):
+def run(fw, tasks_info):
     """
-    Runs multiple QD tasks concurrently, pausing at intervals to train VAEs 
-    and perform cross-task Knowledge Transfer.
-    
-    tasks_info: List of tuples -> (data_path, output_path, name)
+    hàm chạy chính
     """
-    num_tasks = len(tasks_info)
-    print(f"Starting Multitask Execution for {num_tasks} tasks concurrently...")
+    print(f"Starting Multitask Execution for {len(tasks_info)} tasks concurrently...")
     
     # Dictionaries to store statistics for each task across all seeds
-    bf = {i: float('inf') for i in range(num_tasks)}
-    rs = {i: [] for i in range(num_tasks)}
-    time_records = {i: [] for i in range(num_tasks)}
+    bf = {i: float('inf') for i in range(len(tasks_info))}
+    rs = {i: [] for i in range(len(tasks_info))}
+    time_records = {i: [] for i in range(len(tasks_info))}
     
     for seed in range(Configs.REPEAT):
         Configs.rd.seed(seed)
@@ -40,8 +36,6 @@ def multitask_solver(fw, tasks_info):
             task.read_data(d_path)
             
             # Mỗi task là một instance QD, workers là list lưu các tasks. Ở đây code trước sửa có task_id để phân biệt
-
-            # worker = QD(task, o_dir, name, task_id=i)
             worker = QD(task, o_dir, name)
             workers.append(worker)
             
@@ -99,7 +93,7 @@ def multitask_solver(fw, tasks_info):
                     )
 
         t2 = time.time()
-        adjusted_duration_sec = (t2 - t1) - (total_vae_training_time / num_tasks)
+        adjusted_duration_sec = (t2 - t1) - (total_vae_training_time / len(tasks_info))
         
         for i, worker in enumerate(workers):
             log_files[i].close()
@@ -152,7 +146,7 @@ def build_model(fw, file_path, data_path):
 
             tasks_info.append((dt_path, out_dir, name))
             
-        multitask_solver(fw, tasks_info)
+        run(fw, tasks_info)
 
 def main():
     print("Running VAE-Integrated Solver...")

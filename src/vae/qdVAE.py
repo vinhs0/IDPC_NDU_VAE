@@ -87,7 +87,12 @@ class QD:
             norm_0_1 = (val + 1) / 2
             node_id = int(norm_0_1 * (max_node - min_node) + min_node)
             node_id = max(min_node, min(node_id, max_node))
-            chromosome.append(NodeDepth(node_id, 0)) 
+
+            val_depth = feat[1] if len(feat) > 1 else -1.0
+            # norm_depth_0_1 = (val_depth + 1) / 2
+            depth = max(0,int(((val_depth + 1) / 2) * max_node)) # Ensure it doesn't go below 0
+            
+            chromosome.append(NodeDepth(node_id, depth)) 
             
         ind.set_chromosome(chromosome)
         return ind
