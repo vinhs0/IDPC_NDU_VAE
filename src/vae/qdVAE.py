@@ -16,11 +16,10 @@ from .VAE2 import GraphVAE, train_vae
 from .KT2 import KnowledgeTransfer
 
 class QD:
-    def __init__(self, task, output_path: str, file_name: str, task_id: int = 0):
+    def __init__(self, task, output_path: str, file_name: str):
         self.task = task
         self.output_path = output_path
         self.file_name = file_name
-        self.task_id = task_id
         
         # HMQD Components
         self.kt = KnowledgeTransfer()
@@ -134,8 +133,9 @@ class QD:
                 ind.random_init(self.task.adj_domain)
                 ind.update_fitness(self.task)
                 self.add_to_archive(ind)
-
+        print(f"Running QD algo for {self.file_name}")
         for g in range(generations):
+            print(f"Current generation: {g}")
             current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
             best_fitness = -current_best_ind.fitness
             
@@ -151,7 +151,7 @@ class QD:
                 ind.update_fitness(self.task)
                 self.add_to_archive(ind)
                 archive_parents = list(self.archive.values())
-
+            print(f"Fitness: {best_fitness}")
             offspring = self.reproduction(archive_parents)
             for o in offspring:
                 self.add_to_archive(o)
@@ -174,7 +174,7 @@ class QD:
         vae_model = GraphVAE(node_feature_dim=2, num_nodes=self.task_dim, latent_dim=6)
         
         start_train_time = time.time()
-        train_vae(vae_model, graph_data_list, epochs=5)
+        train_vae(vae_model, graph_data_list, epochs=10)
         training_time = time.time() - start_train_time
         
         return vae_model, graph_data_list, training_time

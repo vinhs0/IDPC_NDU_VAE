@@ -58,6 +58,8 @@ class GA:
 
             while generation < Configs.MAX_GENERATIONS:
                 best_fitness = -population.get_best_individual().fitness
+                #print fitness
+                print(f"Gen {generation}, fitness: {best_fitness}")
                 fw_gen.write(f"{generation} {best_fitness}\n")
                 fw_gen.flush()
 
@@ -92,6 +94,8 @@ class GA:
             fw_gen.write("Gen\tTotal_domain\tDomain\tTotal_node\tNode\tTotal_edge\tEdge\n")
 
             while generation < Configs.MAX_GENERATIONS:
+                # #print fitness
+                # print(f"Gen {generation}, fitness: {population.get_best_individual().fitness}")
                 b = population.get_best_individual()
                 
                 # Assuming Individual has these attributes exposed

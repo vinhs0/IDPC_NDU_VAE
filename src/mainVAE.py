@@ -31,11 +31,11 @@ def run(fw, tasks_info):
         
         workers = []
         log_files = []
-        for i, (d_path, o_dir, name) in enumerate(tasks_info):
+        for i, (d_path, o_dir, name) in enumerate(tasks_info):  
             task = IDPCNDU()
             task.read_data(d_path)
             
-            # Mỗi task là một instance QD, workers là list lưu các tasks. Ở đây code trước sửa có task_id để phân biệt
+            # Mỗi task là một instance QD, workers là list lưu các tasks.
             worker = QD(task, o_dir, name)
             workers.append(worker)
             

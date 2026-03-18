@@ -132,7 +132,7 @@ def loss_function(recon_x, x, mu, logvar, beta=1.0):
     return MSE + beta * KLD
 
 
-def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-3):
+def train_vae(model, graph_data_list, epochs=10, batch_size=32, learning_rate=1e-3):
     """
     Trains the GraphVAE model on the graph structures of elite solutions.
     
@@ -172,7 +172,7 @@ def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-
             total_loss += loss.item() * batch_data.num_graphs
             
         # Uncomment to track training progression
-        # avg_loss = total_loss / len(dataloader.dataset)
-        # print(f'Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}')
+        avg_loss = total_loss / len(dataloader.dataset)
+        print(f'Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}')
 
     return model
