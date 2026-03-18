@@ -9,8 +9,8 @@ from vae.NodeDepth import NodeDepth
 
 class Individual:
     def __init__(self, source=None):
-        self.chromosome: List[NodeDepth] = []
-        self.fitness: int = -float('inf') 
+        self.chromosome = [] #: List[NodeDepth] 
+        self.fitness = -float('inf') 
         
         # Stats
         self.total_domain: int = 0
@@ -22,59 +22,46 @@ class Individual:
 
         if source is None:
             pass
-        
         elif isinstance(source, list):
             self.chromosome = [NodeDepth(n.node, n.depth) for n in source]
-            
         elif isinstance(source, Individual):
             self.chromosome = [NodeDepth(n.node, n.depth) for n in source.chromosome]
             self.fitness = source.fitness
-
-    # ---------------------------------------------------------
-    # NEW METHOD: Extract graph data for GNN VAE
-    # ---------------------------------------------------------
-    def get_graph_data(self):
+    # Biến data thành graph (1 dạng ctdl nào đó có graph)
+    def convert_NDList2Graph(self):
         """
-        Reconstructs the graph (tree) from the DFS chromosome.
-        Returns:
-            x (np.array): Node features [Node ID, Depth]
-            edge_index (np.array): Graph connectivity [2, num_edges]
+            Decode NodeDepth thành 2 thứ: Node feature matrix và COO list.
+
+            x: List chứa [Node ID (tên) và Node depth]
+            edge_sources: Tập các cạnh được biểu diễn là [i,j] với i -> j 
+            edge_targets: ngược lại
         """
         x = []
         edge_sources = []
         edge_targets = []
-        
+        # Chromosome là 1 list NodeDepth
         for i, nd in enumerate(self.chromosome):
-            # Node feature (Scale depth slightly or keep raw)
             x.append([float(nd.node), float(nd.depth)])
-            
-            # Find parent to create an edge based on DFS structure
             if i > 0:
-                # Iterate backward to find the immediate parent
                 for j in range(i - 1, -1, -1):
+                    # tại mỗi chromosome, nếu depth của nó = depth node htai - 1 => 2 node này kề nhau
                     if self.chromosome[j].depth == nd.depth - 1:
-                        # Undirected edge for the GNN Message Passing
-                        edge_sources.append(j)
-                        edge_targets.append(i)
-                        edge_sources.append(i)
-                        edge_targets.append(j)
+                        edge_sources.extend([j, i])
+                        edge_targets.extend([i, j])
                         break
-                        
-        x_array = np.array(x, dtype=np.float32)
-        edge_index_array = np.array([edge_sources, edge_targets], dtype=np.int64)
         
-        return x_array, edge_index_array
-    # ---------------------------------------------------------
+        # Kêt quả là một Node feature matrix và COO format
+        return np.array(x, dtype=np.float32), np.array([edge_sources, edge_targets], dtype=np.int64)
 
     def random_init(self, adj_domain: List[List[int]]):
         st = self.prim_rst(adj_domain)
         self.chromosome = self.encode(st)
         self.total_domain = len(adj_domain) - 1 if adj_domain[0] is None else len(adj_domain)
 
-    def get_chromosome(self) -> List[NodeDepth]:
+    def get_chromosome(self):
         return self.chromosome
 
-    def set_chromosome(self, chromosome: List[NodeDepth]):
+    def set_chromosome(self, chromosome):
         self.chromosome = chromosome
 
     def _dfs_util(self, v: int, visited: List[bool], depth: List[int], 
@@ -106,14 +93,13 @@ class Individual:
 
     def prim_rst(self, adj_domain: List[List[int]]) -> List[List[int]]:
         size = len(adj_domain)
+        # Match Java's T.add(new ArrayList()) structure (1-based indexing)
         t = [[] for _ in range(size + 1)] 
         
-        c = [] 
+        c = [1] 
         a: List[Edge] = [] 
 
-        c.append(1)
         start_neighbors = adj_domain[1] if len(adj_domain) > 1 else []
-        
         for v in start_neighbors:
             a.append(Edge(1, v))
 
@@ -121,17 +107,13 @@ class Individual:
         
         while len(c) != target_size and len(a) > 0:
             rand_index = Configs.rd.randint(0, len(a) - 1)
-            e = a[rand_index]
+            e = a.pop(rand_index)
             
             u = e._node1
             v = e._node2
-            
-            a.pop(rand_index)
 
             if v not in c:
-                while len(t) <= u: t.append([])
                 t[u].append(v)
-                
                 c.append(v)
                 
                 if v < len(adj_domain):
@@ -140,86 +122,102 @@ class Individual:
                             a.append(Edge(v, w))
         return t
 
+    # ---------------------------------------------------------
+    # Decoding & Path Reconstruction
+    # ---------------------------------------------------------
     def decode(self, task) -> List[int]:
         path = []
+        if not self.chromosome: return []
+        
         u = [NodeDepth(x.node, x.depth) for x in self.chromosome]
-        
-        if not u:
-            return []
-
         tree: List[NodeDepth] = []
-        visited = [False] * len(u)
+        visited = [0] * len(u) 
+        index_list = [] # Translating Java's "index" ArrayList
         
+        # Init root
         tree.append(u[0])
-        visited[0] = True
+        visited[0] = 1
+        index_list.append(0)
 
-        # --- SAFETY BREAKOUT: Prevent Infinite Loops ---
-        max_iterations = len(u) * 2 
-        iterations = 0
+        # Safety breakout to avoid infinite loops if VAE generates bad chromosome
+        max_iterations = len(u) * 5
+        loops = 0
 
-        while sum(visited) < len(u) and iterations < max_iterations:
-            iterations += 1
-            attached_any = False
+        while sum(visited) != len(u) and loops < max_iterations:
+            loops += 1
+            added_this_round = False
             
             for j in range(1, len(u)):
-                if visited[j]:
+                if visited[j] == 1:
                     continue
                 
                 x = u[j]
-                
-                # Check for invalid node ID generated by VAE
-                if x.node > task.get_number_of_domains() or x.node < 1:
-                    visited[j] = True
-                    attached_any = True
+                if x.node > task.get_number_of_domains():
+                    visited[j] = 1
                     continue
                 
-                attached = False
+                root_node = -1
                 for k in range(len(tree) - 1, -1, -1):
                     y = tree[k]
-                    # Ensure y is valid before accessing adj_domain
-                    if 1 <= y.node <= task.get_number_of_domains():
-                        if y.depth < x.depth and x.node in task.adj_domain[y.node]:
-                            tree.insert(k + 1, NodeDepth(x.node, y.depth + 1))
-                            visited[j] = True
-                            attached = True
-                            attached_any = True
+                    # Java Logic: Depth must be strictly less, and nodes must be connected
+                    if y.depth < x.depth and x.node in task.adj_domain[y.node]:
+                        if root_node == -1:
+                            root_node = k
+                            continue
+                        # Java Logic: pick the root that is closest in the original chromosome sequence
+                        if abs(index_list[root_node] - j) > abs(index_list[k] - j):
+                            root_node = k
+
+                if root_node != -1:
+                    # Find right-most boundary of this subtree
+                    idx = root_node + 1
+                    while idx < len(tree):
+                        if tree[idx].depth <= tree[root_node].depth:
                             break
-                            
-                if not attached:
+                        idx += 1
+                    
+                    # Insert
+                    if idx < len(tree):
+                        tree.insert(idx, NodeDepth(x.node, tree[root_node].depth + 1))
+                        index_list.insert(idx, j)
+                    else:
+                        tree.append(NodeDepth(x.node, tree[root_node].depth + 1))
+                        index_list.append(j)
+                        
+                    visited[j] = 1
+                    added_this_round = True
+                
+                if visited[j] == 0:
                     u[j].depth += 1
                     
-            # If we swept all nodes and NOTHING attached, the VAE generated a broken tree.
-            # Break immediately to prevent the program from freezing!
-            if not attached_any:
-                break 
-
-        # Reconstruct path from tree
+            if not added_this_round and sum(visited) != len(u):
+                break # VAE broke the tree, exit to prevent infinite loop
+                
+        # Path Extraction
         p = NodeDepth(0, 0)
-        idx = -1
+        idx_target = -1
         target_domain = task.get_number_of_domains()
         
         for i in range(len(tree) - 1, -1, -1):
             if tree[i].node == target_domain:
                 path.append(target_domain)
                 p = tree[i]
-                idx = i
+                idx_target = i
                 break
         
-        # If the VAE failed to generate a path to the destination, return empty
-        if idx == -1:
-            return []
+        if idx_target == -1: return [] # Failsafe
 
-        # Trace back
-        for j in range(idx - 1, -1, -1):
+        for j in range(idx_target - 1, -1, -1):
             if tree[j].depth < p.depth:
-                # Add strict adjacency check for rigorous reconstruction
-                if p.node in task.adj_domain[tree[j].node]:
-                    p = tree[j]
-                    path.append(p.node)
+                p = tree[j]
+                path.append(p.node)
 
         path.reverse()
         return path
 
+    # ---------------------------------------------------------
+    # Graph & Dijkstra Costs
+    # ---------------------------------------------------------
     def _min_distance(self, dist: List[int], visited: List[bool], list_nodes: List[int]) -> int:
         min_val = Configs.MAX_VALUE
         min_index = -1
@@ -268,10 +266,16 @@ class Individual:
         
         return distance
 
-    def dijkstra(self, task, list_nodes: List[int], distance: List[List[int]]) -> int:
+    def dijkstra(self, task, list_nodes: List[int], distance_matrix: List[List[int]]) -> int:
         num_nodes = task.get_number_of_nodes()
         dist = [Configs.MAX_VALUE] * (num_nodes + 1)
         visited = [False] * (num_nodes + 1)
+        
+        # VERY IMPORTANT JAVA QUIRK:
+        # In the original Java code, it accepted `distance` as an argument, 
+        # but immediately overwrote it with `distance = task.distance;`.
+        # We mirror this behavior here to ensure costs are exactly identical.
+        adj = task.distance 
         
         s_node = task.get_s()
         t_node = task.get_t()
@@ -291,23 +295,22 @@ class Individual:
             
             for v in list_nodes:
                 if not visited[v] and u != v:
-                    if distance[u][v] != Configs.MAX_VALUE:
-                        if dist[v] > dist[u] + distance[u][v]:
-                            dist[v] = dist[u] + distance[u][v]
+                    if adj[u][v] != Configs.MAX_VALUE:
+                        if dist[v] > dist[u] + adj[u][v]:
+                            dist[v] = dist[u] + adj[u][v]
                             
         return dist[t_node]
 
     def update_fitness(self, task):
         path = self.decode(task)
         
-        # --- PENALIZE INVALID SOLUTIONS INSTANTLY ---
         if not path or len(path) == 0:
             self.fitness = -Configs.MAX_VALUE
             return
             
         list_nodes = []
         for d in path:
-            # Safely check boundaries to prevent KeyError from VAE anomalies
+            # Safely append all border nodes associated with the domains in our path
             if d < len(task.border_node):
                 list_nodes.extend(task.border_node[d])
                 
@@ -316,8 +319,6 @@ class Individual:
             return
             
         distance_matrix = self.build_graph(task, path, list_nodes)
-        
-        # Calculate Dijkstra on the specific subgraph
         cost = self.dijkstra(task, list_nodes, distance_matrix)
         
         self.total_domain = task.get_number_of_domains()
