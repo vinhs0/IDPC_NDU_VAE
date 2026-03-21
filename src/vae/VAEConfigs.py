@@ -12,5 +12,5 @@ class Configs:
     MUTATION_RATE = 0.1
 
     # Parameters for batch size and after how many iterations the algorithm performs KT
-    TRANSFER_INTERVAL_GEN = 100
+    TRANSFER_INTERVAL_GEN = 10
     TRANSFER_BATCH_SIZE = 50

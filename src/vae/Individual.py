@@ -1,7 +1,7 @@
 import copy
 import math
 import numpy as np
-from typing import List, Dict
+from typing import List
 
 from .VAEConfigs import Configs
 from ga.Edge import Edge
@@ -28,30 +28,32 @@ class Individual:
             self.chromosome = [NodeDepth(n.node, n.depth) for n in source.chromosome]
             self.fitness = source.fitness
     # Biến data thành graph (1 dạng ctdl nào đó có graph)
-    def convert_NDList2Graph(self):
-        """
-            Decode NodeDepth thành 2 thứ: Node feature matrix và COO list.
+    # Ở đây ta sẽ đổi từ cái này thành node embeddings với Node2Vec (dùng cái khác nếu cái này tệ)
+    # Chuyển method này về 1 chỗ khác (Embedder.py)
+    # def convert_NDList2Graph(self):
+    #     """
+    #         Decode NodeDepth thành 2 thứ: Node feature matrix và COO list.
 
-            x: List chứa [Node ID (tên) và Node depth]
-            edge_sources: Tập các cạnh được biểu diễn là [i,j] với i -> j 
-            edge_targets: ngược lại
-        """
-        x = []
-        edge_sources = []
-        edge_targets = []
-        # Chromosome là 1 list NodeDepth
-        for i, nd in enumerate(self.chromosome):
-            x.append([float(nd.node), float(nd.depth)])
-            if i > 0:
-                for j in range(i - 1, -1, -1):
-                    # tại mỗi chromosome, nếu depth của nó = depth node htai - 1 => 2 node này kề nhau
-                    if self.chromosome[j].depth == nd.depth - 1:
-                        edge_sources.extend([j, i])
-                        edge_targets.extend([i, j])
-                        break
+    #         x: List chứa [Node ID (tên) và Node depth]
+    #         edge_sources: Tập các cạnh được biểu diễn là [i,j] với i -> j 
+    #         edge_targets: ngược lại
+    #     """
+    #     x = []
+    #     edge_sources = []
+    #     edge_targets = []
+    #     # Chromosome là 1 list NodeDepth
+    #     for i, nd in enumerate(self.chromosome):
+    #         x.append([float(nd.node), float(nd.depth)])
+    #         if i > 0:
+    #             for j in range(i - 1, -1, -1):
+    #                 # tại mỗi chromosome, nếu depth của nó = depth node htai - 1 => 2 node này kề nhau
+    #                 if self.chromosome[j].depth == nd.depth - 1:
+    #                     edge_sources.extend([j, i])
+    #                     edge_targets.extend([i, j])
+    #                     break
         
-        # Kêt quả là một Node feature matrix và COO format
-        return np.array(x, dtype=np.float32), np.array([edge_sources, edge_targets], dtype=np.int64)
+    #     # Kêt quả là một Node feature matrix và COO format
+    #     return np.array(x, dtype=np.float32), np.array([edge_sources, edge_targets], dtype=np.int64)
 
     def random_init(self, adj_domain: List[List[int]]):
         st = self.prim_rst(adj_domain)

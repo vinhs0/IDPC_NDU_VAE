@@ -8,170 +8,189 @@ from torch_geometric.nn import GCNConv
 from torch_geometric.loader import DataLoader 
 from torch_geometric.data import Data
 
+# Make sure your embedder is imported
+from vae.Embedder import GraphEmbedder
+
 class GraphVAE(nn.Module):
-    def __init__(self, node_feature_dim, num_nodes, latent_dim=6):
+    def __init__(self, num_total_domains, num_nodes, latent_dim=6, n2v_embedding_dim=16):
         """
-        Graph VAE Architecture.
+        Graph VAE Architecture using continuous Node2Vec structural embeddings.
         Args:
-            node_feature_dim (int): Number of features per node (e.g., 2 for [Node ID, Depth]).
+            num_total_domains (int): Total number of unique domains to embed (for classification).
             num_nodes (int): Total number of nodes in the graph (Task dimension).
-            latent_dim (int): Dimension of the latent space (d_lat). Default is 6 [cite: 324-326].
+            latent_dim (int): Dimension of the latent space (d_lat). Default is 6.
+            n2v_embedding_dim (int): Dimension of the Node2Vec features from GraphEmbedder.
         """
         super(GraphVAE, self).__init__()
         
-        self.node_feature_dim = node_feature_dim
         self.num_nodes = num_nodes
         self.latent_dim = latent_dim
+        self.num_total_domains = num_total_domains
         
-        # Hidden layer dimension is 2 * d_lat [cite: 324-326]
+        # Features = Depth + n2v_embedding_dim (Topology)
+        self.input_feature_dim = 1 + n2v_embedding_dim
+        
+        # Hidden layer dimension is 2 * d_lat
         hidden_dim = 2 * latent_dim
 
-        # 1. Graph Encoder (Cái này dùng Graph Convolutional Neural Network)
-        self.conv1 = GCNConv(node_feature_dim, hidden_dim)
+        # 1. Graph Encoder 
+        self.conv1 = GCNConv(self.input_feature_dim, hidden_dim)
         self.conv_mu = GCNConv(hidden_dim, latent_dim)
         self.conv_logvar = GCNConv(hidden_dim, latent_dim)
 
-        # 2. MLP Decoder 
-        # Flattens the node embeddings to generate a graph-level output,
-        # mapping back to the continuous range representing Node IDs.
+        # 2. MLP Decoder (Base)
         flattened_latent = latent_dim * num_nodes
-        self.fc3 = nn.Linear(flattened_latent, hidden_dim * num_nodes)
-        self.fc4 = nn.Linear(hidden_dim * num_nodes, node_feature_dim * num_nodes)
+        self.fc_decode = nn.Linear(flattened_latent, hidden_dim * num_nodes)
+        
+        # --- FIXED: Multi-Task Output Branches ---
+        # Branch A: Predicts the continuous Depth
+        self.fc_depth = nn.Linear(hidden_dim, 1)
+        # Branch B: Predicts the categorical Node ID (Logits for CrossEntropy)
+        self.fc_node_id = nn.Linear(hidden_dim, num_total_domains + 1)
 
     def prepare_graph_data(individuals) -> list:
         """
-        Takes a list of Individual objects and converts them into 
-        a list of PyTorch Geometric Data objects.
+        Takes a list of Individuals, passes them through GraphEmbedder, 
+        and extracts pure continuous inputs and separate targets for the VAE.
         """
         graph_data_list = []
-        
+        embed = GraphEmbedder()
         for ind in individuals:
-            x, edge_index = ind.get_graph_data()
-            
-            # Normalize the node features before converting to tensor
-            # The node ID is the first feature, we normalize it to [-1, 1] 
-            # to match the Tanh output of the VAE decoder.
-            max_node = ind.total_domain
-            min_node = 1
-            
-            # If the individual somehow has no nodes, skip
-            if len(x) == 0:
-                continue
+            # 1. Get raw combined features from embedder: [NodeID, Depth, N2V_1, ... N2V_64]
+            combined_features, edge_index = embed.get_embeddings(ind.get_chromosome())
 
-            # Normalize Node IDs
-            if max_node - min_node > 0:
-                x[:, 0] = 2 * ((x[:, 0] - min_node) / (max_node - min_node)) - 1
-            
-            # Normalize Depth (Optional, but good for neural networks)
-            max_depth = np.max(x[:, 1]) if len(x) > 0 else 1
+            # 2. Split them up
+            target_node_ids = combined_features[:, 0].long() # Keep for loss function
+            depths = combined_features[:, 1].float().view(-1, 1)
+            n2v_features = combined_features[:, 2:].float()
+
+            # 3. Normalize Depth to [-1, 1] to match Tanh output
+            max_depth = torch.max(depths).item() if len(depths) > 0 else 1.0
             if max_depth > 0:
-                 x[:, 1] = 2 * (x[:, 1] / max_depth) - 1
+                depths_norm = 2 * (depths / max_depth) - 1
+            else:
+                depths_norm = depths
 
-            # Convert numpy arrays to Torch Tensors
-            x_tensor = torch.tensor(x, dtype=torch.float)
-            edge_index_tensor = torch.tensor(edge_index, dtype=torch.long)
-            
-            graph_data_list.append(Data(x=x_tensor, edge_index=edge_index_tensor))
+            # 4. Create the pristine, continuous input X
+            x_input = torch.cat([depths_norm, n2v_features], dim=-1)
+
+            # 5. Build PyG Data object
+            graph_data_list.append(Data(
+                x=x_input, 
+                edge_index=edge_index,
+                target_node_ids=target_node_ids, 
+                target_depths=depths_norm,
+                max_depth_val=torch.tensor([max_depth], dtype=torch.float)
+            ))
             
         return graph_data_list
 
     def encode(self, x, edge_index):
-        """
-        Encodes node features and graph structure to latent distribution parameters.
-        """
+        """Encodes node features and graph structure to latent parameters."""
         h1 = F.relu(self.conv1(x, edge_index))
         return self.conv_mu(h1, edge_index), self.conv_logvar(h1, edge_index)
 
     def reparameterize(self, mu, logvar):
-        """
-        Standard VAE reparameterization trick.
-        """
+        """Standard VAE reparameterization trick."""
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
 
     def decode(self, z, batch_size):
         """
-        Decodes latent vectors back to the node feature space.
-        Uses Tanh activation to enforce range constraints[cite: 326].
+        Decodes latent vectors back to the Node features space.
+        Splits into continuous Depth (Tanh) and categorical Node ID (Logits).
         """
-        # Flatten node-level embeddings into a graph-level embedding sequence
-        # Shape: [batch_size * num_nodes, latent_dim] -> [batch_size, num_nodes * latent_dim]
+        # Flatten and pass through base decoder
         z_flat = z.view(batch_size, self.num_nodes * self.latent_dim)
+        h = F.relu(self.fc_decode(z_flat))
         
-        h3 = F.relu(self.fc3(z_flat))
-        out = torch.tanh(self.fc4(h3))
+        # Reshape back to individual nodes: [total_nodes_in_batch, hidden_dim]
+        h = h.view(batch_size * self.num_nodes, -1)
         
-        # Reshape back to [batch_size * num_nodes, node_feature_dim] to match input 'x'
-        return out.view(batch_size * self.num_nodes, self.node_feature_dim)
+        # Branch A: Depth (Normalized -1 to 1)
+        recon_depths = torch.tanh(self.fc_depth(h))
+        
+        # Branch B: Node ID (Raw logits for CrossEntropy)
+        recon_logits = self.fc_node_id(h)
+        
+        return recon_depths, recon_logits
 
     def forward(self, x, edge_index, batch):
-        # 'batch' is a PyG assignment array mapping nodes to their respective graphs
         batch_size = batch.max().item() + 1 if batch is not None else 1
         
+        # Encode -> Reparameterize -> Decode
         mu, logvar = self.encode(x, edge_index)
         z = self.reparameterize(mu, logvar)
-        recon_x = self.decode(z, batch_size)
+        recon_depths, recon_logits = self.decode(z, batch_size)
         
-        return recon_x, mu, logvar
+        return recon_depths, recon_logits, mu, logvar
+
+    def get_discrete_node_features(self, recon_depths, recon_logits, max_depth_val):
+        """
+        Helper method for Knowledge Transfer: 
+        Converts VAE output back to discrete [Node_ID, Depth].
+        """
+        # 1. Decode Node ID: Take the class with the highest probability (argmax)
+        discrete_node_ids = torch.argmax(recon_logits, dim=1)
+        
+        # 2. Decode Depth: Reverse the [-1, 1] normalization and round to nearest integer
+        discrete_depths = torch.round(((recon_depths.view(-1) + 1) / 2) * max_depth_val).long()
+        discrete_depths = torch.clamp(discrete_depths, min=0) # Prevent negative depth
+        
+        return discrete_node_ids, discrete_depths
 
 
-def loss_function(recon_x, x, mu, logvar, beta=1.0):
-    # Mean square error
-    MSE = F.mse_loss(recon_x, x, reduction='mean')
-    # KL Divergence
+# --- UPDATED LOSS FUNCTION ---
+def loss_function(recon_depths, target_depths, recon_logits, target_node_ids, mu, logvar, beta=1.0):
+    # 1. Depth Loss (Regression / Mean Squared Error)
+    loss_depth = F.mse_loss(recon_depths, target_depths, reduction='mean')
+    
+    # 2. Node ID Loss (Classification / Cross Entropy)
+    loss_node = F.cross_entropy(recon_logits, target_node_ids, reduction='mean')
+    
+    # 3. KL Divergence
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    KLD = KLD / recon_depths.size(0)
     
-    # Average KLD across the total number of nodes in the batch 
-    # to prevent it from overpowering the MSE reconstruction loss.
-    # Đoạn này là mới có, cần xem
-    total_nodes = x.size(0) 
-    KLD = KLD / total_nodes
-    
-    # Theo công thức cũ (trong paper), total loss là tổng của 2 thành phần (KL Div và MSE)
-    return MSE + beta * KLD
+    # Total Loss combines all three
+    return loss_depth + loss_node + beta * KLD
 
 
-def train_vae(model, graph_data_list, epochs=10, batch_size=32, learning_rate=1e-3):
-    """
-    Trains the GraphVAE model on the graph structures of elite solutions.
-    
-    Args:
-        model (GraphVAE): The GraphVAE instance to train.
-        graph_data_list (List[Data]): A list of torch_geometric.data.Data objects 
-                                      containing the 'x' and 'edge_index' of each elite.
-        epochs (int): Number of training epochs. Default is 5.
-        batch_size (int): Size of training batches.
-        learning_rate (float): Learning rate for Adam optimizer[cite: 327].
-        
-    Returns:
-        model: The trained GraphVAE model.
-    """
+# --- UPDATED TRAINING LOOP ---
+def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-3):
+    """Trains the GraphVAE model on the graph structures of elite solutions."""
     model.train()
-    
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    
-    # Use PyTorch Geometric's specialized DataLoader to handle graph batching
     dataloader = DataLoader(graph_data_list, batch_size=batch_size, shuffle=True)
     
+    device = next(model.parameters()).device
+
     for epoch in range(epochs):
         total_loss = 0
         for batch_data in dataloader:
+            batch_data = batch_data.to(device)
             optimizer.zero_grad()
             
-            # Forward pass using graph structure [cite: 331]
-            recon_batch, mu, logvar = model(batch_data.x, batch_data.edge_index, batch_data.batch)
+            # --- Pass the clean continuous 'x' to the forward pass ---
+            recon_depths, recon_logits, mu, logvar = model(
+                batch_data.x, 
+                batch_data.edge_index, 
+                batch_data.batch
+            )
             
-            # Calculate loss: MSE + KL Divergence [cite: 332]
-            loss = loss_function(recon_batch, batch_data.x, mu, logvar)
-            
+            # --- Calculate combined loss using separate targets ---
+            loss = loss_function(
+                recon_depths, batch_data.target_depths, 
+                recon_logits, batch_data.target_node_ids, 
+                mu, logvar
+            )
+    
             loss.backward()
             optimizer.step()
             
-            # PyG batches graphs dynamically; num_graphs tracks how many are in this specific batch
             total_loss += loss.item() * batch_data.num_graphs
             
-        # Uncomment to track training progression
         avg_loss = total_loss / len(dataloader.dataset)
         print(f'Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}')
 

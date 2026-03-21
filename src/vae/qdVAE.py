@@ -10,7 +10,8 @@ from torch_geometric.data import Data
 from .VAEConfigs import Configs
 from vae.Population import Population
 from vae.Individual import Individual
-from vae.NodeDepth import NodeDepth 
+from vae.NodeDepth import NodeDepth
+from vae.Embedder import GraphEmbedder
 
 from .VAE2 import GraphVAE, train_vae
 from .KT2 import KnowledgeTransfer
@@ -66,35 +67,35 @@ class QD:
         if max_val - min_val == 0: return data
         return 2 * (data - min_val) / (max_val - min_val) - 1
 
-    def vector_to_individual(self, node_features) -> Individual:
-        """
-        Converts GraphVAE output back to an Individual (discrete Node IDs).
-        Note: GraphVAE outputs a 2D matrix of shape [num_nodes, node_feature_dim].
-        """
-        ind = Individual()
-        chromosome = []
+    # def vector_to_individual(self, node_features) -> Individual:
+    #     """
+    #     Converts GraphVAE output back to an Individual (discrete Node IDs).
+    #     Note: GraphVAE outputs a 2D matrix of shape [num_nodes, node_feature_dim].
+    #     """
+    #     ind = Individual()
+    #     chromosome = []
         
-        min_node = 1
-        max_node = self.task_dim
+    #     min_node = 1
+    #     max_node = self.task_dim
         
-        # Ensure we are working with a numpy array
-        if torch.is_tensor(node_features):
-            node_features = node_features.detach().cpu().numpy()
+    #     # Ensure we are working with a numpy array
+    #     if torch.is_tensor(node_features):
+    #         node_features = node_features.detach().cpu().numpy()
             
-        for feat in node_features:
-            val = feat[0] 
-            norm_0_1 = (val + 1) / 2
-            node_id = int(norm_0_1 * (max_node - min_node) + min_node)
-            node_id = max(min_node, min(node_id, max_node))
+    #     for feat in node_features:
+    #         val = feat[0] 
+    #         norm_0_1 = (val + 1) / 2
+    #         node_id = int(norm_0_1 * (max_node - min_node) + min_node)
+    #         node_id = max(min_node, min(node_id, max_node))
 
-            val_depth = feat[1] if len(feat) > 1 else -1.0
-            # norm_depth_0_1 = (val_depth + 1) / 2
-            depth = max(0,int(((val_depth + 1) / 2) * max_node)) # Ensure it doesn't go below 0
+    #         val_depth = feat[1] if len(feat) > 1 else -1.0
+    #         # norm_depth_0_1 = (val_depth + 1) / 2
+    #         depth = max(0,int(((val_depth + 1) / 2) * max_node)) # Ensure it doesn't go below 0
             
-            chromosome.append(NodeDepth(node_id, depth)) 
+    #         chromosome.append(NodeDepth(node_id, depth)) 
             
-        ind.set_chromosome(chromosome)
-        return ind
+    #     ind.set_chromosome(chromosome)
+    #     return ind
 
     def save(self, seed: int, best_fitness: float, t1: float, t2: float):
         out_file_name_opt = f"{self.file_name}_seed({seed}).opt"
@@ -156,7 +157,35 @@ class QD:
             for o in offspring:
                 self.add_to_archive(o)
 
-    def train_and_get_vae(self) -> Tuple[GraphVAE, list, float]:
+    def vector_to_individual(self, discrete_node_ids, discrete_depths) -> Individual:
+        """
+        Converts the discrete outputs from the VAE back into an Individual.
+        """
+        ind = Individual()
+        chromosome = []
+        
+        # Ensure we are working with flat numpy arrays
+        if torch.is_tensor(discrete_node_ids):
+            discrete_node_ids = discrete_node_ids.cpu().numpy()
+        if torch.is_tensor(discrete_depths):
+            discrete_depths = discrete_depths.cpu().numpy()
+            
+        for n_id, d in zip(discrete_node_ids, discrete_depths):
+            # Clamp node ID to valid range (1 to max_node) to prevent classification anomalies
+            node_id = max(1, min(int(n_id), self.task_dim))
+            
+            # Ensure depth doesn't go below 0
+            depth = max(0, int(d))
+            
+            chromosome.append(NodeDepth(node_id, depth)) 
+            
+        ind.set_chromosome(chromosome)
+        return ind
+
+    # ... [Keep your save, run_batch, and helpers exactly the same] ...
+
+    # ---------------- REPLACED METHOD ----------------
+    def train_and_get_vae(self): 
         """
         Extracts elites, prepares PyTorch Geometric graph data, 
         trains the GraphVAE, and returns it.
@@ -164,6 +193,7 @@ class QD:
         current_inds = list(self.archive.values())
         
         if not current_inds:
+            print("No archival solutions found. Exiting...")
             return None, [], 0.0
             
         graph_data_list = GraphVAE.prepare_graph_data(current_inds)
@@ -171,13 +201,49 @@ class QD:
         if len(graph_data_list) == 0:
             return None, [], 0.0
 
-        vae_model = GraphVAE(node_feature_dim=2, num_nodes=self.task_dim, latent_dim=6)
+        # FIX: Updated to match your new __init__ signature
+        vae_model = GraphVAE(
+            num_total_domains=self.task_dim, 
+            num_nodes=self.task_dim, 
+            latent_dim=6,
+            n2v_embedding_dim=16
+        )
+        
+        # FIX: Ensure model is pushed to GPU if available
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        vae_model = vae_model.to(device)
         
         start_train_time = time.time()
+        # Train on the same device
         train_vae(vae_model, graph_data_list, epochs=10)
         training_time = time.time() - start_train_time
         
         return vae_model, graph_data_list, training_time
+
+    # def train_and_get_vae(self): 
+    #     """
+    #     Extracts elites, prepares PyTorch Geometric graph data, 
+    #     trains the GraphVAE, and returns it.
+    #     """
+    #     current_inds = list(self.archive.values())
+        
+    #     if not current_inds:
+    #         print("No archival solutions found. Exiting...")
+    #         # FIX: Must return 3 items to match the unpacking in mainVAE.py
+    #         return None, [], 0.0
+            
+    #     graph_data_list = GraphVAE.prepare_graph_data(current_inds)
+        
+    #     if len(graph_data_list) == 0:
+    #         return None, [], 0.0
+
+    #     vae_model = GraphVAE(node_feature_dim=2, num_nodes=self.task_dim, latent_dim=6)
+        
+    #     start_train_time = time.time()
+    #     train_vae(vae_model, graph_data_list, epochs=10)
+    #     training_time = time.time() - start_train_time
+        
+    #     return vae_model, graph_data_list, training_time
 
     # =========================================================================
     # SINGLE-TASK METHOD (Restored monolithic run loop for backward compatibility)
