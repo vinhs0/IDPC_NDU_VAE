@@ -3,6 +3,10 @@ import math
 import random
 import torch
 
+from vae.VAE2 import GraphVAE
+
+# get_discrete_node_features() la gi???
+
 class KnowledgeTransfer:
     def __init__(self):
         # UCB1 Statistics for bandit selection
@@ -44,11 +48,11 @@ class KnowledgeTransfer:
         
         # Prepare Graph Data for the target individual
         # Note: target_archive holds Individual objects, we use GraphVAE's prep method
-        # to generate the exact input features (x, edge_index) needed
-        from vae.VAE2 import GraphVAE 
+        # to generate the exact input features (x, edge_index) needed 
         p_data = GraphVAE.prepare_graph_data([target_ind])[0]
         
         device = next(source_vae.parameters()).device
+        # Autoencoder khac cai generator o day
         x = p_data.x.to(device)
         edge_index = p_data.edge_index.to(device)
         max_depth = p_data.max_depth_val.item()
@@ -88,7 +92,7 @@ class KnowledgeTransfer:
                 final_nodes = rec_nodes[:D_t]
                 final_depths = rec_depths[:D_t]
                 
-        return final_nodes.cpu().numpy(), final_depths.cpu().numpy()
+        return final_nodes.cpu().numpy(), final_depths.cpu().numpy() # Gửi về cpu
 
     def generator_transfer(self, target_archive, source_vae, D_t, D_s):
         device = next(source_vae.parameters()).device

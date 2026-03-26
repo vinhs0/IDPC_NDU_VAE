@@ -65,13 +65,14 @@ class GraphVAE(nn.Module):
             n2v_features = combined_features[:, 2:].float()
 
             # 3. Normalize Depth to [-1, 1] to match Tanh output
+            # Đoạn này cần check, không rõ tại sao lại phải normalize trước depth
             max_depth = torch.max(depths).item() if len(depths) > 0 else 1.0
             if max_depth > 0:
                 depths_norm = 2 * (depths / max_depth) - 1
             else:
                 depths_norm = depths
 
-            # 4. Create the pristine, continuous input X
+            # Nối (concat) giữa độ sâu và node embedding features (16)
             x_input = torch.cat([depths_norm, n2v_features], dim=-1)
 
             # 5. Build PyG Data object
@@ -119,7 +120,7 @@ class GraphVAE(nn.Module):
     def forward(self, x, edge_index, batch):
         batch_size = batch.max().item() + 1 if batch is not None else 1
         
-        # Encode -> Reparameterize -> Decode
+        # Encode -> Reparameterize -> Decode  
         mu, logvar = self.encode(x, edge_index)
         z = self.reparameterize(mu, logvar)
         recon_depths, recon_logits = self.decode(z, batch_size)
@@ -153,8 +154,11 @@ def loss_function(recon_depths, target_depths, recon_logits, target_node_ids, mu
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     KLD = KLD / recon_depths.size(0)
     
-    # Total Loss combines all three
-    return loss_depth + loss_node + beta * KLD
+    # Thêm total_loss và 3 cái loss khác
+    total_loss = loss_depth + beta * KLD + loss_node
+    
+    # Return the total AND the three individual components
+    return total_loss, loss_depth, loss_node, KLD
 
 
 # --- UPDATED TRAINING LOOP ---
@@ -167,7 +171,12 @@ def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-
     device = next(model.parameters()).device
 
     for epoch in range(epochs):
-        total_loss = 0
+        # Accumulators for the different loss components
+        total_loss_accum = 0.0
+        depth_loss_accum = 0.0
+        node_loss_accum = 0.0
+        kld_accum = 0.0
+        
         for batch_data in dataloader:
             batch_data = batch_data.to(device)
             optimizer.zero_grad()
@@ -179,8 +188,8 @@ def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-
                 batch_data.batch
             )
             
-            # --- Calculate combined loss using separate targets ---
-            loss = loss_function(
+            # --- Unpack the 4 separate loss values ---
+            loss, l_depth, l_node, l_kld = loss_function(
                 recon_depths, batch_data.target_depths, 
                 recon_logits, batch_data.target_node_ids, 
                 mu, logvar
@@ -189,9 +198,22 @@ def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-
             loss.backward()
             optimizer.step()
             
-            total_loss += loss.item() * batch_data.num_graphs
+            # Multiply by num_graphs to get the raw sum for accurate averaging later
+            num_graphs = batch_data.num_graphs
+            total_loss_accum += loss.item() * num_graphs
+            depth_loss_accum += l_depth.item() * num_graphs
+            node_loss_accum += l_node.item() * num_graphs
+            kld_accum += l_kld.item() * num_graphs
             
-        avg_loss = total_loss / len(dataloader.dataset)
-        print(f'Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}')
+        # Calculate final averages for this epoch
+        n = len(dataloader.dataset)
+        avg_total = total_loss_accum / n
+        avg_depth = depth_loss_accum / n
+        avg_node = node_loss_accum / n
+        avg_kld = kld_accum / n
+        
+        # --- THE NEW PRINT STATEMENT ---
+        # Using flush=True ensures it prints immediately to the console without buffering delays
+        print(f"Epoch {epoch+1:03d}/{epochs:03d} | Total: {avg_total:.4f} -> [Node ID: {avg_node:.4f} | Depth MSE: {avg_depth:.4f} | KLD: {avg_kld:.4f}]", flush=True)
 
     return model
