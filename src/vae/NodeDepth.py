@@ -1,10 +1,7 @@
 class NodeDepth:
     def __init__(self, node_or_other=0, depth=0):
         """
-        Handles three Java constructors:
-        1. NodeDepth()             -> NodeDepth()
-        2. NodeDepth(int, int)     -> NodeDepth(1, 5)
-        3. NodeDepth(NodeDepth)    -> NodeDepth(existing_obj)
+        biến đồ thị thành NodeDepth
         """
         if isinstance(node_or_other, NodeDepth):
             # Copy constructor logic

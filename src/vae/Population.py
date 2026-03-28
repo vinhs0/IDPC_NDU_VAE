@@ -240,8 +240,6 @@ class Population:
         return offspring
 
     def survival_selection(self):
-        # Sort desc (Higher fitness is better)
-        # Remember fitness is negative cost, so higher is closer to 0
         self.population.sort(key=lambda x: x.fitness, reverse=True)
         
         # Truncate

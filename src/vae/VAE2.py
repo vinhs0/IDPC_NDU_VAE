@@ -12,23 +12,24 @@ from torch_geometric.data import Data
 from vae.Embedder import GraphEmbedder
 
 class GraphVAE(nn.Module):
-    def __init__(self, num_total_domains, num_nodes, latent_dim=6, n2v_embedding_dim=16):
+    def __init__(self, num_total_domains, num_nodes, latent_dim=8, n2v_embedding_dim=15):
         """
         Graph VAE Architecture using continuous Node2Vec structural embeddings.
         Args:
             num_total_domains (int): Total number of unique domains to embed (for classification).
             num_nodes (int): Total number of nodes in the graph (Task dimension).
-            latent_dim (int): Dimension of the latent space (d_lat). Default is 6.
+            latent_dim (int): Dimension of the latent space (d_lat). Default is 8.
             n2v_embedding_dim (int): Dimension of the Node2Vec features from GraphEmbedder.
         """
         super(GraphVAE, self).__init__()
         
-        self.num_nodes = num_nodes
+        self.num_nodes = num_nodes  
         self.latent_dim = latent_dim
         self.num_total_domains = num_total_domains
         
         # Features = Depth + n2v_embedding_dim (Topology)
-        self.input_feature_dim = 1 + n2v_embedding_dim
+        # chỗ này thử nghiệm dùng 15 n2v embeddings dim + 1 cái cho depth => tổng là 16
+        self.input_feature_dim = n2v_embedding_dim + 1
         
         # Hidden layer dimension is 2 * d_lat
         hidden_dim = 2 * latent_dim
@@ -42,10 +43,9 @@ class GraphVAE(nn.Module):
         flattened_latent = latent_dim * num_nodes
         self.fc_decode = nn.Linear(flattened_latent, hidden_dim * num_nodes)
         
-        # --- FIXED: Multi-Task Output Branches ---
-        # Branch A: Predicts the continuous Depth
+        # Dự đoán Depth
         self.fc_depth = nn.Linear(hidden_dim, 1)
-        # Branch B: Predicts the categorical Node ID (Logits for CrossEntropy)
+        # Dự đoán xem Domain này là Domain nào (Domain ID)
         self.fc_node_id = nn.Linear(hidden_dim, num_total_domains + 1)
 
     def prepare_graph_data(individuals) -> list:
@@ -64,8 +64,7 @@ class GraphVAE(nn.Module):
             depths = combined_features[:, 1].float().view(-1, 1)
             n2v_features = combined_features[:, 2:].float()
 
-            # 3. Normalize Depth to [-1, 1] to match Tanh output
-            # Đoạn này cần check, không rõ tại sao lại phải normalize trước depth
+            # Normalize depth để khớp với output mô hình dự đoán (theo hàm tanh, sẽ nằm trong khoảng [-1,1])
             max_depth = torch.max(depths).item() if len(depths) > 0 else 1.0
             if max_depth > 0:
                 depths_norm = 2 * (depths / max_depth) - 1
@@ -75,7 +74,6 @@ class GraphVAE(nn.Module):
             # Nối (concat) giữa độ sâu và node embedding features (16)
             x_input = torch.cat([depths_norm, n2v_features], dim=-1)
 
-            # 5. Build PyG Data object
             graph_data_list.append(Data(
                 x=x_input, 
                 edge_index=edge_index,
@@ -141,27 +139,20 @@ class GraphVAE(nn.Module):
         
         return discrete_node_ids, discrete_depths
 
-
-# --- UPDATED LOSS FUNCTION ---
 def loss_function(recon_depths, target_depths, recon_logits, target_node_ids, mu, logvar, beta=1.0):
-    # 1. Depth Loss (Regression / Mean Squared Error)
+    # loss của depth mô hình tiên đoán ra và depth thực tế của cái node đó
     loss_depth = F.mse_loss(recon_depths, target_depths, reduction='mean')
-    
-    # 2. Node ID Loss (Classification / Cross Entropy)
+    # Domain ID (dùng để phân biệt điểm biên trong 1 domain)
     loss_node = F.cross_entropy(recon_logits, target_node_ids, reduction='mean')
     
-    # 3. KL Divergence
+    # KLD là loss khi VAE cố gắng học được latent representation của vector embeddings
+    # Công thức này là công thức trong paper
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     KLD = KLD / recon_depths.size(0)
     
-    # Thêm total_loss và 3 cái loss khác
     total_loss = loss_depth + beta * KLD + loss_node
-    
-    # Return the total AND the three individual components
     return total_loss, loss_depth, loss_node, KLD
 
-
-# --- UPDATED TRAINING LOOP ---
 def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-3):
     """Trains the GraphVAE model on the graph structures of elite solutions."""
     model.train()
@@ -212,8 +203,8 @@ def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-
         avg_node = node_loss_accum / n
         avg_kld = kld_accum / n
         
-        # --- THE NEW PRINT STATEMENT ---
-        # Using flush=True ensures it prints immediately to the console without buffering delays
+        # Luu y: ở đây Node ID là để VAE đoán xem domain này là domain nào 
+        # (categorical), và đây là bắt buộc vì điểm biên được gán theo domain ID
         print(f"Epoch {epoch+1:03d}/{epochs:03d} | Total: {avg_total:.4f} -> [Node ID: {avg_node:.4f} | Depth MSE: {avg_depth:.4f} | KLD: {avg_kld:.4f}]", flush=True)
 
     return model

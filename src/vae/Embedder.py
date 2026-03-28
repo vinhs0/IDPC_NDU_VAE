@@ -3,14 +3,14 @@ import torch
 from torch_geometric.nn import Node2Vec
 
 class GraphEmbedder:
-    def __init__(self, embedding_dim=16, epochs=10):
+    def __init__(self, embedding_dim=15, epochs=10):
         self.embedding_dim = embedding_dim
         self.epochs = epochs
 
     def _convert_NDList2Graph(self, chromosome):
         """
-        PRIVATE METHOD: The outside world doesn't need to call this.
-        It handles the annoying translation to COO format internally.
+        Phương thức private để giúp đổi từ List NodeDepth (trong individual) thành
+        dữ liệu dạng graph (COO List và node feature matrix)
         """
         x = []
         edge_sources = []
@@ -29,7 +29,6 @@ class GraphEmbedder:
 
     def get_embeddings(self, chromosome):
         """
-        PUBLIC METHOD: This is the only thing your VAE or Main Loop calls.
         Input: List[NodeDepth]
         Output: PyTorch Tensors (node_features, edge_index)
         """
@@ -45,7 +44,7 @@ class GraphEmbedder:
             zero_padding = torch.zeros((x.shape[0], self.embedding_dim))
             return torch.cat([x, zero_padding], dim=1), edge_index
 
-        # 3. Train Node2Vec
+        # Sử dụng Node2Vec để embed node, sau đó message passing
         model = Node2Vec(
             edge_index,
             embedding_dim=self.embedding_dim,

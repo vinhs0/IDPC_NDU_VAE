@@ -5,8 +5,6 @@ import torch
 
 from vae.VAE2 import GraphVAE
 
-# get_discrete_node_features() la gi???
-
 class KnowledgeTransfer:
     def __init__(self):
         # UCB1 Statistics for bandit selection
@@ -41,6 +39,7 @@ class KnowledgeTransfer:
         self.successes[method] += reward
         self.total_selections += 1
 
+    # To-do: check xem method get_discrete_node_features() là để làm gì
     def autoencoder_transfer(self, target_archive, source_vae, D_t, D_s):
         if not target_archive: return None 
         

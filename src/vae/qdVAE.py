@@ -59,43 +59,13 @@ class QD:
             
         return False, False
 
-    def normalize_data(self, data):
-        """Helper to normalize data to [-1, 1] for VAE (Tanh output)."""
-        data = np.array(data)
-        if data.size == 0: return data
-        min_val, max_val = np.min(data), np.max(data)
-        if max_val - min_val == 0: return data
-        return 2 * (data - min_val) / (max_val - min_val) - 1
-
-    # def vector_to_individual(self, node_features) -> Individual:
-    #     """
-    #     Converts GraphVAE output back to an Individual (discrete Node IDs).
-    #     Note: GraphVAE outputs a 2D matrix of shape [num_nodes, node_feature_dim].
-    #     """
-    #     ind = Individual()
-    #     chromosome = []
-        
-    #     min_node = 1
-    #     max_node = self.task_dim
-        
-    #     # Ensure we are working with a numpy array
-    #     if torch.is_tensor(node_features):
-    #         node_features = node_features.detach().cpu().numpy()
-            
-    #     for feat in node_features:
-    #         val = feat[0] 
-    #         norm_0_1 = (val + 1) / 2
-    #         node_id = int(norm_0_1 * (max_node - min_node) + min_node)
-    #         node_id = max(min_node, min(node_id, max_node))
-
-    #         val_depth = feat[1] if len(feat) > 1 else -1.0
-    #         # norm_depth_0_1 = (val_depth + 1) / 2
-    #         depth = max(0,int(((val_depth + 1) / 2) * max_node)) # Ensure it doesn't go below 0
-            
-    #         chromosome.append(NodeDepth(node_id, depth)) 
-            
-    #     ind.set_chromosome(chromosome)
-    #     return ind
+    # def normalize_data(self, data):
+    #     """Helper to normalize data to [-1, 1] for VAE (Tanh output)."""
+    #     data = np.array(data)
+    #     if data.size == 0: return data
+    #     min_val, max_val = np.min(data), np.max(data)
+    #     if max_val - min_val == 0: return data
+    #     return 2 * (data - min_val) / (max_val - min_val) - 1
 
     def save(self, seed: int, best_fitness: float, t1: float, t2: float):
         out_file_name_opt = f"{self.file_name}_seed({seed}).opt"
@@ -119,13 +89,11 @@ class QD:
         except IOError as e:
             print(f"Error saving file: {e}")
 
-    # =========================================================================
-    # MULTITASKING METHODS (Used by the concurrent main.py script)
-    # =========================================================================
 
     def run_batch(self, generations: int, fw_gen=None, global_gen_start: int = 0):
         """
-        Runs the MAP-Elites evolution for a specific batch of generations.
+        Chạy MAP_Elites evolution cho 1 lượng generation nhất định, sau đó dừng để chuyển giao tri thức
+        (chuyển giao tri thức - knowledge transfer được thực hiện periodically)
         """
         # Ensure archive is seeded if starting fresh
         if not self.archive:
@@ -159,7 +127,7 @@ class QD:
 
     def vector_to_individual(self, discrete_node_ids, discrete_depths) -> Individual:
         """
-        Converts the discrete outputs from the VAE back into an Individual.
+        đổi discrete node thành List[NodeDepth]
         """
         ind = Individual()
         chromosome = []
@@ -201,12 +169,11 @@ class QD:
         if len(graph_data_list) == 0:
             return None, [], 0.0
 
-        # FIX: Updated to match your new __init__ signature
         vae_model = GraphVAE(
             num_total_domains=self.task_dim, 
             num_nodes=self.task_dim, 
             latent_dim=6,
-            n2v_embedding_dim=16
+            n2v_embedding_dim=15
         )
         
         # FIX: Ensure model is pushed to GPU if available
@@ -215,7 +182,7 @@ class QD:
         
         start_train_time = time.time()
         # Train on the same device
-        train_vae(vae_model, graph_data_list, epochs=10)
+        train_vae(vae_model, graph_data_list, epochs=50)
         training_time = time.time() - start_train_time
         
         return vae_model, graph_data_list, training_time

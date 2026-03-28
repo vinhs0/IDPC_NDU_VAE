@@ -5,7 +5,6 @@ import numpy as np
 import torch
 from typing import List
 
-# Project imports (Assumed structure)
 from .VAEConfigs import Configs
 from ga.Population import Population
 from ga.Individual import Individual
@@ -13,6 +12,8 @@ from ga.NodeDepth import NodeDepth
 
 from VAE import VAE, train_vae
 from KT import KnowledgeTransfer
+
+# Luồng GA cũ (bởi vì trong bài này không cần nhiều mục tiêu, nên dùng GA có lẽ là đủ rồi?)
 
 class GA:
     def __init__(self, task, output_path: str, file_name: str):

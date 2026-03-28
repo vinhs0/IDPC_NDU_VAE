@@ -107,7 +107,7 @@ def run(fw, tasks_info):
             current_cost = -final_best_ind.fitness
             bf[i] = min(bf[i], current_cost)
             rs[i].append(current_cost)
-            time_records[i].append(adjusted_duration_sec / 60.0) # Convert to minutes
+            time_records[i].append(adjusted_duration_sec / 60.0)
             
             print(f"Task {i} ({tasks_info[i][2]}) Seed {seed} Best distance: {current_cost}")
 
@@ -123,13 +123,11 @@ def run(fw, tasks_info):
 
 def build_model(fw, file_path, data_path):
     input_list_file = os.path.join(file_path, "file.txt")
-    
     if not os.path.exists(input_list_file):
         print(f"Warning: {input_list_file} not found.")
         return
 
     tasks_info = []
-
     with open(input_list_file, 'r') as sc:
         header = sc.readline() # skip dòng đầu
         
@@ -147,7 +145,6 @@ def build_model(fw, file_path, data_path):
             tasks_info.append((dt_path, out_dir, name))
             
         run(fw, tasks_info)
-
 def main():
     print("Running VAE-Integrated Solver...")
     print("Is Torch available?", torch.cuda.is_available())

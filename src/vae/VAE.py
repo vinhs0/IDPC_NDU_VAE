@@ -4,6 +4,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 
+# FILE VAE cũ, hiện tại đã dùng sang VAE2.py
+
 class VAE(nn.Module):
     # latent_dim = 6 is in the paper
     def __init__(self, task_dim, latent_dim=6):
