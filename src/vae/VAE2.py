@@ -161,6 +161,9 @@ def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-
     
     device = next(model.parameters()).device
 
+    # Initialize the loss tracking dictionary
+    loss_history = {'total': [], 'depth': [], 'node': [], 'kld': []}
+
     for epoch in range(epochs):
         # Accumulators for the different loss components
         total_loss_accum = 0.0
@@ -203,8 +206,71 @@ def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-
         avg_node = node_loss_accum / n
         avg_kld = kld_accum / n
         
+        # Save the averages to the history dictionary
+        loss_history['total'].append(avg_total)
+        loss_history['depth'].append(avg_depth)
+        loss_history['node'].append(avg_node)
+        loss_history['kld'].append(avg_kld)
+        
         # Luu y: ở đây Node ID là để VAE đoán xem domain này là domain nào 
         # (categorical), và đây là bắt buộc vì điểm biên được gán theo domain ID
         print(f"Epoch {epoch+1:03d}/{epochs:03d} | Total: {avg_total:.4f} -> [Node ID: {avg_node:.4f} | Depth MSE: {avg_depth:.4f} | KLD: {avg_kld:.4f}]", flush=True)
 
-    return model
+    # Return BOTH the model and the history to prevent the unpacking error
+    return model, loss_history
+
+# def train_vae(model, graph_data_list, epochs=5, batch_size=32, learning_rate=1e-3):
+#     """Trains the GraphVAE model on the graph structures of elite solutions."""
+#     model.train()
+#     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+#     dataloader = DataLoader(graph_data_list, batch_size=batch_size, shuffle=True)
+    
+#     device = next(model.parameters()).device
+
+#     for epoch in range(epochs):
+#         # Accumulators for the different loss components
+#         total_loss_accum = 0.0
+#         depth_loss_accum = 0.0
+#         node_loss_accum = 0.0
+#         kld_accum = 0.0
+        
+#         for batch_data in dataloader:
+#             batch_data = batch_data.to(device)
+#             optimizer.zero_grad()
+            
+#             # --- Pass the clean continuous 'x' to the forward pass ---
+#             recon_depths, recon_logits, mu, logvar = model(
+#                 batch_data.x, 
+#                 batch_data.edge_index, 
+#                 batch_data.batch
+#             )
+            
+#             # --- Unpack the 4 separate loss values ---
+#             loss, l_depth, l_node, l_kld = loss_function(
+#                 recon_depths, batch_data.target_depths, 
+#                 recon_logits, batch_data.target_node_ids, 
+#                 mu, logvar
+#             )
+    
+#             loss.backward()
+#             optimizer.step()
+            
+#             # Multiply by num_graphs to get the raw sum for accurate averaging later
+#             num_graphs = batch_data.num_graphs
+#             total_loss_accum += loss.item() * num_graphs
+#             depth_loss_accum += l_depth.item() * num_graphs
+#             node_loss_accum += l_node.item() * num_graphs
+#             kld_accum += l_kld.item() * num_graphs
+            
+#         # Calculate final averages for this epoch
+#         n = len(dataloader.dataset)
+#         avg_total = total_loss_accum / n
+#         avg_depth = depth_loss_accum / n
+#         avg_node = node_loss_accum / n
+#         avg_kld = kld_accum / n
+        
+#         # Luu y: ở đây Node ID là để VAE đoán xem domain này là domain nào 
+#         # (categorical), và đây là bắt buộc vì điểm biên được gán theo domain ID
+#         print(f"Epoch {epoch+1:03d}/{epochs:03d} | Total: {avg_total:.4f} -> [Node ID: {avg_node:.4f} | Depth MSE: {avg_depth:.4f} | KLD: {avg_kld:.4f}]", flush=True)
+
+#     return model

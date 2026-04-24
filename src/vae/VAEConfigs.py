@@ -12,4 +12,5 @@ class Configs:
     MUTATION_RATE = 0.1
 
     TRANSFER_INTERVAL_GEN = 250 #chỉnh cái này để check KT
-    TRANSFER_BATCH_SIZE = 50
+    TRANSFER_BATCH_SIZE = 32
+    TRAIN_EPOCH = 5

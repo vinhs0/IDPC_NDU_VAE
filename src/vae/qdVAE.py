@@ -152,40 +152,79 @@ class QD:
 
     # ... [Keep your save, run_batch, and helpers exactly the same] ...
 
-    # ---------------- REPLACED METHOD ----------------
+
     def train_and_get_vae(self): 
         """
         Extracts elites, prepares PyTorch Geometric graph data, 
-        trains the GraphVAE, and returns it.
+        trains the GraphVAE, and returns it along with loss history.
         """
         current_inds = list(self.archive.values())
         
         if not current_inds:
             print("No archival solutions found. Exiting...")
-            return None, [], 0.0
+            # FIX: Return 4 items to prevent unpacking errors
+            return None, [], 0.0, None
             
         graph_data_list = GraphVAE.prepare_graph_data(current_inds)
         
         if len(graph_data_list) == 0:
-            return None, [], 0.0
+            # FIX: Return 4 items to prevent unpacking errors
+            return None, [], 0.0, None
 
         vae_model = GraphVAE(
             num_total_domains=self.task_dim, 
             num_nodes=self.task_dim, 
-            latent_dim=6,
+            latent_dim=8,
             n2v_embedding_dim=15
         )
         
-        # FIX: Ensure model is pushed to GPU if available
+        # Ensure model is pushed to GPU if available
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         vae_model = vae_model.to(device)
         
         start_train_time = time.time()
-        # Train on the same device
-        train_vae(vae_model, graph_data_list, epochs=50)
+        
+        # FIX: Catch the loss_history returned by your updated train_vae function
+        vae_model, loss_history = train_vae(vae_model, graph_data_list, epochs=50)
+        
         training_time = time.time() - start_train_time
         
-        return vae_model, graph_data_list, training_time
+        # FIX: Return all 4 items expected by your main() script
+        return vae_model, current_inds, training_time, loss_history
+    # ---------------- OLD REPLACED METHOD ----------------
+    # def train_and_get_vae(self): 
+    #     """
+    #     Extracts elites, prepares PyTorch Geometric graph data, 
+    #     trains the GraphVAE, and returns it.
+    #     """
+    #     current_inds = list(self.archive.values())
+        
+    #     if not current_inds:
+    #         print("No archival solutions found. Exiting...")
+    #         return None, [], 0.0
+            
+    #     graph_data_list = GraphVAE.prepare_graph_data(current_inds)
+        
+    #     if len(graph_data_list) == 0:
+    #         return None, [], 0.0
+
+    #     vae_model = GraphVAE(
+    #         num_total_domains=self.task_dim, 
+    #         num_nodes=self.task_dim, 
+    #         latent_dim=8,
+    #         n2v_embedding_dim=15
+    #     )
+        
+    #     # FIX: Ensure model is pushed to GPU if available
+    #     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    #     vae_model = vae_model.to(device)
+        
+    #     start_train_time = time.time()
+    #     # Train on the same device
+    #     train_vae(vae_model, graph_data_list, epochs=50)
+    #     training_time = time.time() - start_train_time
+        
+    #     return vae_model, graph_data_list, training_time
 
     # def train_and_get_vae(self): 
     #     """

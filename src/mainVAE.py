@@ -4,7 +4,7 @@ import statistics
 import torch
 import numpy as np
 
-from vae.qdVAE import QD
+from vae.qdVAE import QD 
 from vae.VAEConfigs import Configs
 from problem.IDPCNDU import IDPCNDU
 
@@ -152,9 +152,9 @@ def main():
         print("Config CUDA first!, exiting...")
         return 
     
-    data_path = "D:\\multi-nde-py\\data" 
-    output_path = "outputVAE2"
-    result_file = os.path.join("outputVAE2", "test_vae_results.txt")
+    data_path = "D:\\multi-nde-py\\augment_data" 
+    output_path = "augment_output"
+    result_file = os.path.join("augment_output", "file.txt")
     
     if not os.path.exists(output_path):
         os.makedirs(output_path)
