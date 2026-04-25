@@ -84,8 +84,8 @@ def main():
     
     # Configuration Paths
     data_path = r"D:\multi-nde-py\augment_data"
-    output_path = "augment_output"
-    result_file = os.path.join("augment_output", "test.txt")
+    output_path = "augment_output_ga"
+    result_file = os.path.join("augment_output_ga", "test.txt")
     
     if not os.path.exists(output_path):
         os.makedirs(output_path)

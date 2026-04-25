@@ -122,6 +122,9 @@ class Individual:
                     for w in adj_domain[v]:
                         if w not in c:
                             a.append(Edge(v, w))
+
+        if len(c) != target_size:
+            print(f"WARNING: Spanning tree died early! Only reached {len(c)}/{target_size} domains. Domain graph is disconnected.")
         return t
 
     # ---------------------------------------------------------

@@ -154,7 +154,7 @@ def main():
     
     data_path = "D:\\multi-nde-py\\augment_data" 
     output_path = "augment_output"
-    result_file = os.path.join("augment_output", "file.txt")
+    result_file = os.path.join("augment_output", "test.txt")
     
     if not os.path.exists(output_path):
         os.makedirs(output_path)

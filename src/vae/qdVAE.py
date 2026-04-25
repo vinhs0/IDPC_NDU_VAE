@@ -105,6 +105,7 @@ class QD:
         print(f"Running QD algo for {self.file_name}")
         for g in range(generations):
             print(f"Current generation: {g}")
+            print(self.archive) #debug
             current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
             best_fitness = -current_best_ind.fitness
             
