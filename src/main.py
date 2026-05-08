@@ -83,9 +83,9 @@ def main():
     print("Running...")
     
     # Configuration Paths
-    data_path = r"D:\multi-nde-py\augment_data"
-    output_path = "augment_output_ga"
-    result_file = os.path.join("augment_output_ga", "test.txt")
+    data_path = r"D:\multi-nde-py\dataset"
+    output_path = "waxman_output_ga"
+    result_file = os.path.join("waxman_output_ga", "test.txt")
     
     if not os.path.exists(output_path):
         os.makedirs(output_path)
