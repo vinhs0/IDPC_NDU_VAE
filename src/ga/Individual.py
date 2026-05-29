@@ -31,11 +31,9 @@ class Individual:
             pass
         
         elif isinstance(source, list):
-            # Constructor from chromosome list
             self.chromosome = [NodeDepth(n.node, n.depth) for n in source]
             
         elif isinstance(source, Individual):
-            # Copy constructor
             self.chromosome = [NodeDepth(n.node, n.depth) for n in source.chromosome]
             self.fitness = source.fitness
 
@@ -43,9 +41,7 @@ class Individual:
         st = self.prim_rst(adj_domain)
         self.chromosome = self.encode(st)
         self.total_domain = len(adj_domain) - 1 if adj_domain[0] is None else len(adj_domain)
-        # Python lists are 0-indexed, usually adjDomain is 1-based in these problems.
-        # Adjusted logic assuming adjDomain is 0-indexed or handled purely by ID.
-
+        
     def get_chromosome(self) -> List[NodeDepth]:
         return self.chromosome
 

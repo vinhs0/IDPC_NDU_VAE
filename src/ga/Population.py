@@ -26,6 +26,7 @@ class Population:
 
     def init_population(self):
         self.population.clear()
+        attempts = 0 # Track how many times we've tried to generate an individual
 
         while len(self.population) < Configs.POPULATION_SIZE:
             i = Individual()
@@ -35,6 +36,19 @@ class Population:
             # Check validity (fitness > -MAX_VALUE)
             if i.fitness > -Configs.MAX_VALUE:
                 self.population.append(i)
+                attempts = 0 # Reset attempts on success
+            else:
+                attempts += 1
+            
+            # --- THE FIX: ESCAPE HATCH ---
+            # If we fail to randomly generate a valid path after 50 tries, 
+            # we force it into the population with a massive penalty.
+            if attempts >= 50:
+                # Assign a terrible fitness score so it ranks at the bottom
+                # but still allows the GA initialization loop to finish!
+                i.fitness = -Configs.MAX_VALUE + 1 
+                self.population.append(i)
+                attempts = 0
 
     def eval_population(self):
         for ind in self.population:
@@ -240,11 +254,11 @@ class Population:
         return offspring
 
     def survival_selection(self):
-        # Sort desc (Higher fitness is better)
-        # Remember fitness is negative cost, so higher is closer to 0
+        # Sort
         self.population.sort(key=lambda x: x.fitness, reverse=True)
-        
-        # Truncate
+        fitness_list = [x.fitness for x in self.population]
+        print(fitness_list)
+        # Get top POPULATION.SIZE 
         if len(self.population) > Configs.POPULATION_SIZE:
             self.population = self.population[:Configs.POPULATION_SIZE]
             

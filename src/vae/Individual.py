@@ -27,38 +27,11 @@ class Individual:
         elif isinstance(source, Individual):
             self.chromosome = [NodeDepth(n.node, n.depth) for n in source.chromosome]
             self.fitness = source.fitness
-    # Biến data thành graph (1 dạng ctdl nào đó có graph)
-    # Ở đây ta sẽ đổi từ cái này thành node embeddings với Node2Vec (dùng cái khác nếu cái này tệ)
-    # Chuyển method này về 1 chỗ khác (Embedder.py)
-    # def convert_NDList2Graph(self):
-    #     """
-    #         Decode NodeDepth thành 2 thứ: Node feature matrix và COO list.
 
-    #         x: List chứa [Node ID (tên) và Node depth]
-    #         edge_sources: Tập các cạnh được biểu diễn là [i,j] với i -> j 
-    #         edge_targets: ngược lại
-    #     """
-    #     x = []
-    #     edge_sources = []
-    #     edge_targets = []
-    #     # Chromosome là 1 list NodeDepth
-    #     for i, nd in enumerate(self.chromosome):
-    #         x.append([float(nd.node), float(nd.depth)])
-    #         if i > 0:
-    #             for j in range(i - 1, -1, -1):
-    #                 # tại mỗi chromosome, nếu depth của nó = depth node htai - 1 => 2 node này kề nhau
-    #                 if self.chromosome[j].depth == nd.depth - 1:
-    #                     edge_sources.extend([j, i])
-    #                     edge_targets.extend([i, j])
-    #                     break
-        
-    #     # Kêt quả là một Node feature matrix và COO format
-    #     return np.array(x, dtype=np.float32), np.array([edge_sources, edge_targets], dtype=np.int64)
-
-    def random_init(self, adj_domain: List[List[int]]):
-        st = self.prim_rst(adj_domain)
-        self.chromosome = self.encode(st)
-        self.total_domain = len(adj_domain) - 1 if adj_domain[0] is None else len(adj_domain)
+    def random_init(self, task):
+        st = self.prim_rst(task)
+        self.chromosome = self.encode(st, task.start_domain)
+        self.total_domain = task.get_number_of_domains()
 
     def get_chromosome(self):
         return self.chromosome
@@ -78,34 +51,35 @@ class Individual:
                 if not visited[u]:
                     self._dfs_util(u, visited, depth, depth_of_v + 1, rs, t)
 
-    def dfs(self, t: List[List[int]]) -> List[NodeDepth]:
+    def dfs(self, t: List[List[int]], start_domain: int) -> List[NodeDepth]:
         size = len(t)
         visited = [False] * size
         depth = [0] * size
         rs = []
 
         if size > 1:
-            depth[1] = 0
-            self._dfs_util(1, visited, depth, depth[1], rs, t)
+            depth[start_domain] = 0
+            self._dfs_util(start_domain, visited, depth, depth[start_domain], rs, t)
         
         return rs
 
-    def encode(self, t: List[List[int]]) -> List[NodeDepth]:
-        return self.dfs(t)
+    def encode(self, t: List[List[int]], start_domain: int) -> List[NodeDepth]:
+        return self.dfs(t, start_domain)
 
-    def prim_rst(self, adj_domain: List[List[int]]) -> List[List[int]]:
+    def prim_rst(self, task) -> List[List[int]]:
+        adj_domain = task.adj_domain
         size = len(adj_domain)
-        # Match Java's T.add(new ArrayList()) structure (1-based indexing)
         t = [[] for _ in range(size + 1)] 
         
-        c = [1] 
+        start_dom = task.start_domain # FIX
+        c = [start_dom] 
         a: List[Edge] = [] 
 
-        start_neighbors = adj_domain[1] if len(adj_domain) > 1 else []
+        start_neighbors = adj_domain[start_dom] if len(adj_domain) > start_dom else []
         for v in start_neighbors:
-            a.append(Edge(1, v))
+            a.append(Edge(start_dom, v)) # FIX
 
-        target_size = len(adj_domain) - 1 
+        target_size = len(adj_domain) - 1
         
         while len(c) != target_size and len(a) > 0:
             rand_index = Configs.rd.randint(0, len(a) - 1)
@@ -127,9 +101,6 @@ class Individual:
             print(f"WARNING: Spanning tree died early! Only reached {len(c)}/{target_size} domains. Domain graph is disconnected.")
         return t
 
-    # ---------------------------------------------------------
-    # Decoding & Path Reconstruction
-    # ---------------------------------------------------------
     def decode(self, task) -> List[int]:
         path = []
         if not self.chromosome: return []
@@ -201,7 +172,8 @@ class Individual:
         # Path Extraction
         p = NodeDepth(0, 0)
         idx_target = -1
-        target_domain = task.get_number_of_domains()
+        
+        target_domain = task.target_domain # FIX: Dynamic target
         
         for i in range(len(tree) - 1, -1, -1):
             if tree[i].node == target_domain:

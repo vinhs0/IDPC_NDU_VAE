@@ -26,15 +26,29 @@ class Population:
 
     def init_population(self):
         self.population.clear()
+        attempts = 0 
 
         while len(self.population) < Configs.POPULATION_SIZE:
             i = Individual()
+            # This calls the prim_rst that keeps failing
             i.random_init(self.task.adj_domain)
             i.update_fitness(self.task)
 
-            # Check validity (fitness > -MAX_VALUE)
+            # Accept if valid
             if i.fitness > -Configs.MAX_VALUE:
                 self.population.append(i)
+                attempts = 0 
+            else:
+                attempts += 1
+            
+            # --- THE ESCAPE HATCH ---
+            # If qdVAE fails to randomly generate a path after 50 tries, 
+            # we force the broken path into the archive with a massive penalty 
+            # so the VAE can take over and start evolving it!
+            if attempts >= 50:
+                i.fitness = -Configs.MAX_VALUE + 1 
+                self.population.append(i)
+                attempts = 0
 
     def eval_population(self):
         for ind in self.population:

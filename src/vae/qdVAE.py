@@ -92,20 +92,26 @@ class QD:
 
     def run_batch(self, generations: int, fw_gen=None, global_gen_start: int = 0):
         """
-        Chạy MAP_Elites evolution cho 1 lượng generation nhất định, sau đó dừng để chuyển giao tri thức
-        (chuyển giao tri thức - knowledge transfer được thực hiện periodically)
+        Chạy MAP_Elites evolution cho 1 lượng generation nhất định
         """
-        # Ensure archive is seeded if starting fresh
+        # --- Ensure archive is seeded WITH ESCAPE HATCH ---
         if not self.archive:
-            for _ in range(Configs.POPULATION_SIZE):
+            for i in range(Configs.POPULATION_SIZE):
                 ind = Individual()
-                ind.random_init(self.task.adj_domain)
+                ind.random_init(self.task)
                 ind.update_fitness(self.task)
-                self.add_to_archive(ind)
+                was_added, _ = self.add_to_archive(ind)
+                
+                if not was_added:
+                    ind.fitness = -Configs.MAX_VALUE + 1
+                    ind.domain = i
+                    self.archive[(ind.domain,)] = ind
+
         print(f"Running QD algo for {self.file_name}")
+        # ... [keep the rest of run_batch exactly the same] ...
         for g in range(generations):
             print(f"Current generation: {g}")
-            print(self.archive) #debug
+            
             current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
             best_fitness = -current_best_ind.fitness
             
@@ -115,12 +121,20 @@ class QD:
 
             archive_parents = list(self.archive.values())
             
+            # Secondary failsafe inside the loop
             if not archive_parents: 
                 ind = Individual()
-                ind.random_init(self.task.adj_domain)
+                ind.random_init(self.task)
                 ind.update_fitness(self.task)
-                self.add_to_archive(ind)
+                was_added, _ = self.add_to_archive(ind)
+                
+                if not was_added:
+                    ind.fitness = -Configs.MAX_VALUE + 1
+                    ind.domain = 0
+                    self.archive[(0,)] = ind
+                
                 archive_parents = list(self.archive.values())
+                
             print(f"Fitness: {best_fitness}")
             offspring = self.reproduction(archive_parents)
             for o in offspring:
@@ -268,7 +282,7 @@ class QD:
     #     # Random Initialization
     #     for _ in range(Configs.POPULATION_SIZE):
     #         ind = Individual()
-    #         ind.random_init(self.task.adj_domain)
+    #         ind.random_init(self.task)
     #         ind.update_fitness(self.task)
     #         self.add_to_archive(ind)
 
@@ -294,7 +308,7 @@ class QD:
                 
     #             if not archive_parents: 
     #                 ind = Individual()
-    #                 ind.random_init(self.task.adj_domain)
+    #                 ind.random_init(self.task)
     #                 ind.update_fitness(self.task)
     #                 self.add_to_archive(ind)
     #                 archive_parents = list(self.archive.values())
