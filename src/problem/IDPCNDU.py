@@ -19,14 +19,14 @@ class IDPCNDU:
         self.start_domain: int = 0
         self.target_domain: int = 0
         
-        # Data structures (Initialized to None or empty lists later)
-        # Using 1-based indexing means lists will be size N+1
+        # Data structures
         self.domain: List[int] = [] 
         self.distance: List[List[int]] = [] 
         self.list_domain: List[List[int]] = [] 
         self.adj_domain: List[List[int]] = [] 
         self.border_node: List[List[int]] = [] 
         self.parent_domain: List[List[int]] = [] 
+        self.domain_edge_count: List[List[int]] = [] # Tracks exact edges between domains
         
         self.adj_node: List[List[int]] = [] 
         self.parent_node: List[List[int]] = [] 
@@ -37,16 +37,13 @@ class IDPCNDU:
         
         self.edges_domain: List[Edge] = []
 
-    # Getters/Setters are Python properties or direct access
     def get_number_of_nodes(self): return self.number_of_nodes
     def get_number_of_domains(self): return self.number_of_domains
     def get_s(self): return self.s
     def get_t(self): return self.t
     def get_border_node(self): return self.border_node
-    # ... In Python, we typically access attributes directly (e.g., task.s, task.domain)
 
     def read_data(self, file_path: str):
-        # --- Reliable Parsing Strategy ---
         with open(file_path, 'r') as f:
             lines = f.readlines()
         
@@ -64,7 +61,7 @@ class IDPCNDU:
         self.t = int(endpoints[1])
         line_idx += 1
 
-        # Re-init structures
+        # Re-init structures with correct sizes
         self.indegree_node = [0] * (self.number_of_nodes + 1)
         self.outdegree_node = [0] * (self.number_of_nodes + 1)
         self.indegree_domain = [0] * (self.number_of_domains + 1)
@@ -76,8 +73,9 @@ class IDPCNDU:
             self.distance[i][i] = 0
             
         self.list_domain = [[] for _ in range(self.number_of_domains + 1)]
+        self.domain_edge_count = [[0] * (self.number_of_domains + 1) for _ in range(self.number_of_domains + 1)]
         
-        # FIX: Read exactly `self.number_of_domains` lines sequentially
+        # Read Domains
         for d in range(1, self.number_of_domains + 1):
             parts = lines[line_idx].split()
             line_idx += 1
@@ -86,7 +84,6 @@ class IDPCNDU:
                 self.domain[nid] = d
                 self.list_domain[d].append(nid)
                 
-        # FIX: Dynamically register Start and Target Domains
         self.start_domain = self.domain[self.s]
         self.target_domain = self.domain[self.t]
 
@@ -97,7 +94,7 @@ class IDPCNDU:
         self.adj_node = [[] for _ in range(self.number_of_nodes + 1)]
         self.parent_node = [[] for _ in range(self.number_of_nodes + 1)]
 
-        # Read Edges (Remaining lines)
+        # Read Edges
         while line_idx < len(lines):
             edge_parts = lines[line_idx].split()
             line_idx += 1
@@ -115,13 +112,15 @@ class IDPCNDU:
             self.outdegree_node[i] += 1
             self.indegree_node[j] += 1
 
-            # Update Domain Graph
             d_i = self.domain[i]
             d_j = self.domain[j]
             
             if d_i != d_j:
                 self.outdegree_domain[d_i] += 1
                 self.indegree_domain[d_j] += 1
+                
+                # Safely track pair connections
+                self.domain_edge_count[d_i][d_j] += 1
                 
                 if d_j not in self.adj_domain[d_i]:
                     self.adj_domain[d_i].append(d_j)
@@ -135,6 +134,12 @@ class IDPCNDU:
                 if d_i not in self.parent_domain[d_j]:
                     self.parent_domain[d_j].append(d_i)
 
+        # FIX 1: Force S and T to be recognized in the border list to avoid Dijkstra disconnects
+        if self.s not in self.border_node[self.start_domain]:
+            self.border_node[self.start_domain].append(self.s)
+        if self.t not in self.border_node[self.target_domain]:
+            self.border_node[self.target_domain].append(self.t)
+
         self.pre_filter_processing()
         self.floyd_warshall()
         
@@ -146,11 +151,8 @@ class IDPCNDU:
 
     def floyd_warshall(self):
         for d in range(1, self.number_of_domains + 1):
-            if d == self.start_domain or d == self.target_domain:
-                continue
-            
+            # FIX 2: Do NOT skip start/target domains. Calculate shortest paths inside them too.
             lst = self.list_domain[d]
-            # O(N^3) within the domain
             for k in lst:
                 for i in lst:
                     for j in lst:
@@ -161,11 +163,8 @@ class IDPCNDU:
         self.indegree_domain[d] = -1
         for dd in self.adj_domain[d]:
             self.indegree_domain[dd] -= 1
-            
-            # Remove d from parent_domain[dd]
             if d in self.parent_domain[dd]:
                 self.parent_domain[dd].remove(d)
-            
             if self.indegree_domain[dd] == 0:
                 self.update_indegree_domain(dd)
 
@@ -173,35 +172,35 @@ class IDPCNDU:
         self.outdegree_domain[d] = -1
         for dd in self.parent_domain[d]:
             self.outdegree_domain[dd] -= 1
-            
-            # Remove d from adj_domain[dd]
             if d in self.adj_domain[dd]:
                 self.adj_domain[dd].remove(d)
-                
             if self.outdegree_domain[dd] == 0:
                 self.update_outdegree_domain(dd)
 
     def update_indegree(self, node: int):
-        self.indegree_node[node] = -1 # Mark as removed
-        
-        # Iterate over copy since we might recurse
+        self.indegree_node[node] = -1 
         neighbors = list(self.adj_node[node])
         
         for v in neighbors:
             self.indegree_node[v] -= 1
-            
-            # Remove node from parent_node[v]
             if node in self.parent_node[v]:
                 self.parent_node[v].remove(node)
                 
             self.distance[node][v] = Configs.MAX_VALUE
-            
             d_node = self.domain[node]
             d_v = self.domain[v]
             
-            if d_node != d_v: # If they are in different domains (Border Logic)
+            if d_node != d_v: 
                 if node in self.border_node[d_node]:
                     self.border_node[d_node].remove(node)
+                
+                # FIX 3a: Sever "Ghost" Domain Edges
+                self.domain_edge_count[d_node][d_v] -= 1
+                if self.domain_edge_count[d_node][d_v] == 0:
+                    if d_v in self.adj_domain[d_node]:
+                        self.adj_domain[d_node].remove(d_v)
+                    if d_node in self.parent_domain[d_v]:
+                        self.parent_domain[d_v].remove(d_node)
                 
                 self.outdegree_domain[d_node] -= 1
                 if self.outdegree_domain[d_node] == 0:
@@ -216,24 +215,28 @@ class IDPCNDU:
 
     def update_outdegree(self, node: int):
         self.outdegree_node[node] = -1
-        
         parents = list(self.parent_node[node])
         
         for v in parents:
             self.outdegree_node[v] -= 1
-            
-            # Remove node from adj_node[v]
             if node in self.adj_node[v]:
                 self.adj_node[v].remove(node)
                 
             self.distance[v][node] = Configs.MAX_VALUE
-            
             d_node = self.domain[node]
             d_v = self.domain[v]
             
             if d_node != d_v:
                 if node in self.border_node[d_node]:
                     self.border_node[d_node].remove(node)
+                
+                # FIX 3b: Sever "Ghost" Domain Edges
+                self.domain_edge_count[d_v][d_node] -= 1
+                if self.domain_edge_count[d_v][d_node] == 0:
+                    if d_node in self.adj_domain[d_v]:
+                        self.adj_domain[d_v].remove(d_node)
+                    if d_v in self.parent_domain[d_node]:
+                        self.parent_domain[d_node].remove(d_v)
                 
                 self.indegree_domain[d_node] -= 1
                 if self.indegree_domain[d_node] == 0:
@@ -250,18 +253,12 @@ class IDPCNDU:
         loop_active = True
         while loop_active:
             loop_active = False 
-            
-            # Safely loop through all nodes
             for i in range(1, self.number_of_nodes + 1):
-                
-                # Protect Source and Target from being deleted
                 if i == self.s or i == self.t:
                     continue
-                    
                 if self.indegree_node[i] == 0:
                     loop_active = True
                     self.update_indegree(i)
-                
                 if self.outdegree_node[i] == 0:
                     loop_active = True
                     self.update_outdegree(i)
