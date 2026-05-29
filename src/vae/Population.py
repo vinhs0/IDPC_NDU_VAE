@@ -255,7 +255,8 @@ class Population:
 
     def survival_selection(self):
         self.population.sort(key=lambda x: x.fitness, reverse=True)
-        
+        fitness_list = [x.fitness for x in self.population]
+        print(fitness_list)
         # Truncate
         if len(self.population) > Configs.POPULATION_SIZE:
             self.population = self.population[:Configs.POPULATION_SIZE]

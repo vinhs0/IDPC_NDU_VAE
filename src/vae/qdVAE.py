@@ -110,11 +110,23 @@ class QD:
         print(f"Running QD algo for {self.file_name}")
         # ... [keep the rest of run_batch exactly the same] ...
         for g in range(generations):
-            print(f"Current generation: {g}")
+            # print(f"Current generation: {g}")
             
             current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
             best_fitness = -current_best_ind.fitness
             
+            print(f"\n=== Generation {g} | Best Fitness: {best_fitness} ===")
+            print(f"Total Unique Solutions in Archive: {len(self.archive)}")
+            
+            # Sort the keys so the output is easy to read
+            sorted_bds = sorted(self.archive.keys())
+            
+            for bd in sorted_bds:
+                ind = self.archive[bd]
+                # Assuming BD is (domain, length). We print the positive cost (-fitness)
+                print(f"  -> Cell {bd}: Cost = {-ind.fitness}")
+            print("===================================================\n")
+
             if fw_gen:
                 fw_gen.write(f"{global_gen_start + g} {best_fitness}\n")
                 fw_gen.flush()
