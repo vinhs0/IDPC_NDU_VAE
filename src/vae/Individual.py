@@ -276,22 +276,14 @@ class Individual:
             self.fitness = -Configs.MAX_VALUE
             return
             
-        # ---------------------------------------------------------
-        # THE NUCLEAR FIX:
-        # Instead of just loading the border nodes, we forcefully load 
-        # EVERY SINGLE NODE inside the path's domains into the Dijkstra graph.
-        # This makes it completely immune to Floyd-Warshall bugs!
-        # ---------------------------------------------------------
         list_nodes = set()
         for d in path:
             if d < len(task.list_domain):
                 for n in task.list_domain[d]:
                     list_nodes.add(n)
         
-        # Absolute guarantee that Start and Target nodes are in the search pool
         list_nodes.add(task.s)
         list_nodes.add(task.t)
-        
         list_nodes = list(list_nodes)
                 
         if not list_nodes:
@@ -301,6 +293,7 @@ class Individual:
         distance_matrix = self.build_graph(task, path, list_nodes)
         cost = self.dijkstra(task, list_nodes, distance_matrix)
         
+        self.domain = len(path)
         self.total_domain = task.get_number_of_domains()
         self.total_node = task.get_number_of_nodes()
         self.fitness = -cost

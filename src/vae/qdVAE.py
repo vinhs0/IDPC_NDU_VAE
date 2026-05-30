@@ -91,39 +91,49 @@ class QD:
 
 
     def run_batch(self, generations: int, fw_gen=None, global_gen_start: int = 0):
-        """
-        Chạy MAP_Elites evolution cho 1 lượng generation nhất định
-        """
-        # --- Ensure archive is seeded WITH ESCAPE HATCH ---
+        # --- Ensure archive is seeded SAFELY ---
         if not self.archive:
-            for i in range(Configs.POPULATION_SIZE):
+            print(f"Seeding Initial Generation for {self.file_name}...")
+            
+            # 1. Inject the Guaranteed Heuristic Path
+            heuristic_ind = Individual()
+            heuristic_ind.heuristic_init(self.task)
+            heuristic_ind.update_fitness(self.task)
+            was_added, _ = self.add_to_archive(heuristic_ind)
+            
+            if was_added:
+                print(f"--> Heuristic Seed Injected! Starting Cost: {-heuristic_ind.fitness}")
+
+            # 2. Fill the rest with randoms
+            for _ in range(Configs.POPULATION_SIZE - 1):
                 ind = Individual()
                 ind.random_init(self.task)
                 ind.update_fitness(self.task)
-                was_added, _ = self.add_to_archive(ind)
+                self.add_to_archive(ind)
                 
-                if not was_added:
+            # 3. SAFE Escape Hatch: Fill missing archive spots without overwriting elites
+            placeholder_id = 0
+            while len(self.archive) < Configs.POPULATION_SIZE:
+                bd = (placeholder_id,)
+                if bd not in self.archive:
+                    ind = Individual()
                     ind.fitness = -Configs.MAX_VALUE + 1
-                    ind.domain = i
-                    self.archive[(ind.domain,)] = ind
+                    ind.domain = placeholder_id
+                    self.archive[bd] = ind
+                placeholder_id += 1
 
-        print(f"Running QD algo for {self.file_name}")
-        # ... [keep the rest of run_batch exactly the same] ...
+        print(f"\nRunning QD algo for {self.file_name}")
+        
         for g in range(generations):
-            # print(f"Current generation: {g}")
-            
             current_best_ind = max(self.archive.values(), key=lambda ind: ind.fitness)
             best_fitness = -current_best_ind.fitness
             
-            print(f"\n=== Generation {g} | Best Fitness: {best_fitness} ===")
+            print(f"=== Generation {g} | Best Fitness: {best_fitness} ===")
             print(f"Total Unique Solutions in Archive: {len(self.archive)}")
             
-            # Sort the keys so the output is easy to read
             sorted_bds = sorted(self.archive.keys())
-            
             for bd in sorted_bds:
                 ind = self.archive[bd]
-                # Assuming BD is (domain, length). We print the positive cost (-fitness)
                 print(f"  -> Cell {bd}: Cost = {-ind.fitness}")
             print("===================================================\n")
 
@@ -133,7 +143,6 @@ class QD:
 
             archive_parents = list(self.archive.values())
             
-            # Secondary failsafe inside the loop
             if not archive_parents: 
                 ind = Individual()
                 ind.random_init(self.task)
@@ -147,7 +156,6 @@ class QD:
                 
                 archive_parents = list(self.archive.values())
                 
-            print(f"Fitness: {best_fitness}")
             offspring = self.reproduction(archive_parents)
             for o in offspring:
                 self.add_to_archive(o)

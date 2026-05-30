@@ -158,8 +158,8 @@ def main():
         return 
     
     data_path = "D:\\multi-nde-py\\dataset" 
-    output_path = "g_output"
-    result_file = os.path.join("g_output", "test.txt")
+    output_path = "g_output_vae"
+    result_file = os.path.join("g_output_vae", "test.txt")
     
     if not os.path.exists(output_path):
         os.makedirs(output_path)
